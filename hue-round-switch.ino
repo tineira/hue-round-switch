@@ -1,7 +1,9 @@
 #include <WiFi.h>
 #include "config.h"
 
-#define FIRMWARE_VERSION "0.4.0"
+#define FIRMWARE_VERSION "0.4.2"
+
+SET_LOOP_TASK_STACK_SIZE(24576);
 
 String gHueBridgeIp;
 String gHueAppKey;
@@ -69,6 +71,8 @@ static void afterWifiUp() {
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+  // TinyUSB CDC: el monitor no debe resetear al cerrar DTR (HWCDC del S3 sí lo hace en silicio).
+  Serial.enableReboot(false);
   delay(200);
 
   pinMode(LED_BUILTIN, OUTPUT);

@@ -10,7 +10,7 @@ Same console as `hue-simple-switch` (`https://hue.tineira.com`). This board is a
 - Arduino IDE board name: `XIAO_ESP32S3`
 - FQBN: `esp32:esp32:XIAO_ESP32S3`
 - Core: Arduino-ESP32 **3.3.12** (already installed in `%LOCALAPPDATA%\Arduino15`)
-- Flash: 8 MB, PSRAM: 8 MB OPI. Default 8 MB partition (3 MB APP). USB CDC on boot: Enabled. USB Mode: Hardware CDC and JTAG.
+- Flash: 8 MB, PSRAM: 8 MB OPI. Default 8 MB partition (3 MB APP). USB CDC on boot: Enabled. USB Mode: **USB-OTG (TinyUSB)**, not Hardware CDC and JTAG. HWCDC resets the S3 when the serial monitor closes (DTR/RTS); TinyUSB + `Serial.enableReboot(false)` does not. Upload still works; if a later flash fails, hold BOOT.
 - Display: Seeed Studio Round Display for XIAO — 1.28" 240×240 GC9A01, capacitive touch CHSC6X (I2C `0x2E`, INT `D7`). Backlight `D6` (v1.1 slide switch must be ON).
 - Wi-Fi: 2.4 GHz only.
 
@@ -43,7 +43,7 @@ Replace `COMx` with the XIAO port (`arduino-cli board list`). First flash on a n
 
 - File → Open this folder (`hue-round-switch.ino`)
 - Board: `XIAO_ESP32S3` (esp32)
-- PSRAM: OPI PSRAM. USB CDC on boot: Enabled. USB Mode: Hardware CDC and JTAG. Flash: 8 MB.
+- PSRAM: OPI PSRAM. USB CDC on boot: Enabled. USB Mode: USB-OTG (TinyUSB). Flash: 8 MB.
 - Libraries: ESP32 core + Arduino_GFX from this sketchbook. Not LVGL. Not GigaDash TFT_eSPI.
 
 ## Channels (v1)

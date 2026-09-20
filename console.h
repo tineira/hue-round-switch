@@ -152,34 +152,22 @@ inline void consoleFetchConfig() {
   }
 
   const uint32_t localRev = gRecipeRev;
-  const uint8_t localCount = gRecipeCount;
-  const uint8_t localPages = gPageCount;
-  const uint8_t localIdx = gPageIndex;
-  const PageSwipeAxis localAxis = gPageSwipeAxis;
-  HueRecipe backup[kMaxRecipes];
-  Page pageBackup[kMaxPages];
-  memcpy(backup, gRecipes, sizeof(backup));
-  memcpy(pageBackup, gPages, sizeof(pageBackup));
-
-  uint32_t rev = 0;
-  if (!recipesParseConfig(body.c_str(), &rev)) {
-    memcpy(gRecipes, backup, sizeof(backup));
-    memcpy(gPages, pageBackup, sizeof(pageBackup));
-    gRecipeCount = localCount;
-    gPageCount = localPages;
-    gPageIndex = localIdx;
-    gPageSwipeAxis = localAxis;
-    Serial.println("console config parse failed");
+  const int remoteRev = jsonGetInt(body.c_str(), "rev", -1);
+  if (remoteRev < 0) {
+    Serial.println("console config missing rev");
     return;
   }
-  if (localRev >= rev) {
-    memcpy(gRecipes, backup, sizeof(backup));
-    memcpy(gPages, pageBackup, sizeof(pageBackup));
-    gRecipeCount = localCount;
-    gPageCount = localPages;
-    gPageIndex = localIdx;
-    gPageSwipeAxis = localAxis;
-    Serial.printf("console rev %u local %u — keep NVS\n", rev, localRev);
+  if (localRev >= static_cast<uint32_t>(remoteRev)) {
+    Serial.printf("console rev %u local %u — keep NVS\n", remoteRev, localRev);
+    return;
+  }
+
+  // No copiar recetas/páginas en el stack: HueRecipe×16 ~10 KB y loopTask son 8 KB.
+  uint32_t rev = 0;
+  if (!recipesParseConfig(body.c_str(), &rev)) {
+    recipesLoad();
+    pagesLoad();
+    Serial.println("console config parse failed — NVS restored");
     return;
   }
   gRecipeRev = rev;
