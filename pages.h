@@ -105,6 +105,44 @@ inline char gLastSceneRid[kMaxPages][40];
 inline bool gNeedHueState = false;
 inline bool gNeedFullPaint = false;
 
+static const uint16_t kScreenTimeoutDefault = 30;
+static const uint16_t kScreenTimeoutMin = 10;
+static const uint16_t kScreenTimeoutMax = 600;
+inline uint16_t gScreenTimeoutSec = kScreenTimeoutDefault;
+
+inline uint16_t pagesClampTimeout(int v) {
+  if (v == 0) {
+    return 0;
+  }
+  if (v < (int)kScreenTimeoutMin) {
+    return kScreenTimeoutMin;
+  }
+  if (v > (int)kScreenTimeoutMax) {
+    return kScreenTimeoutMax;
+  }
+  return static_cast<uint16_t>(v);
+}
+
+inline void pagesSaveTimeout() {
+  Preferences prefs;
+  prefs.begin("pages", false);
+  prefs.putUShort("sto", gScreenTimeoutSec);
+  prefs.end();
+}
+
+// Campo ausente: no toca NVS / valor actual. 0 = always on; el resto se clampa a 10–600.
+inline bool pagesParseTimeout(const char *body) {
+  if (!body || !jsonHasKey(body, "screenTimeoutSec")) {
+    return false;
+  }
+  const uint16_t t = pagesClampTimeout(jsonGetInt(body, "screenTimeoutSec", (int)kScreenTimeoutDefault));
+  if (t == gScreenTimeoutSec) {
+    return false;
+  }
+  gScreenTimeoutSec = t;
+  return true;
+}
+
 inline void pageCopyField(char *dst, size_t n, const char *src) {
   if (!dst || n == 0) {
     return;
@@ -471,6 +509,7 @@ inline void pagesSave() {
   prefs.begin("pages", false);
   prefs.putString("json", pagesToJson());
   prefs.putString("axis", gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal");
+  prefs.putUShort("sto", gScreenTimeoutSec);
   prefs.putString("bid", gPageBridgeId);
   prefs.putUChar("idx", gPageIndex);
   for (uint8_t i = 0; i < kMaxPages; i++) {
@@ -495,6 +534,7 @@ inline void pagesLoad() {
   gPageBridgeId = prefs.getString("bid", "");
   const String json = prefs.getString("json", "[]");
   const String axis = prefs.getString("axis", "horizontal");
+  gScreenTimeoutSec = pagesClampTimeout((int)prefs.getUShort("sto", kScreenTimeoutDefault));
   gPageIndex = prefs.getUChar("idx", 0);
   for (uint8_t i = 0; i < kMaxPages; i++) {
     char key[4] = {'s', static_cast<char>('0' + i), 0, 0};
@@ -509,8 +549,8 @@ inline void pagesLoad() {
   gPageCount = n;
   pagesEnsureDefault();
   pagesClampIndex();
-  LOG("NVS pages count=%u idx=%u axis=%s\n", gPageCount, gPageIndex,
-                gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal");
+  LOG("NVS pages count=%u idx=%u axis=%s timeout=%u\n", gPageCount, gPageIndex,
+                gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal", gScreenTimeoutSec);
 }
 
 inline void pagesBindBridge(const String &bid) {
@@ -549,6 +589,7 @@ inline bool pagesParseConfig(const char *body) {
   jsonEachArrayObject(body, "pages", pagesParseOne, &n);
   gPageCount = n;
   pagesParseAxis(body);
+  pagesParseTimeout(body);
   pagesEnsureDefault();
   pagesClampIndex();
   return true;

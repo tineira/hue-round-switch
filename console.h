@@ -160,6 +160,10 @@ inline void consoleFetchConfig() {
   if (localRev >= static_cast<uint32_t>(remoteRev)) {
     LOG("console rev %u local %u — keep NVS\n", remoteRev, localRev);
     pagesFillDimFromRecipes();
+    if (pagesParseTimeout(body.c_str())) {
+      pagesSaveTimeout();
+      LOG("console timeout %u (rev unchanged)\n", gScreenTimeoutSec);
+    }
     return;
   }
 

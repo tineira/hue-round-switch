@@ -327,6 +327,7 @@ Al seleccionar un Round Display (no un simple-switch), la columna izquierda **no
 ### 9.1 Ajustes del display (una vez por aparato)
 
 - **Page swipe:** `Left / right` (default) o `Up / down`.
+- **Screen timeout:** segundos hasta reposo del disco (default **30**). **0** = always on. Rango 0 o 10–600. Detalle: `docs/idle-display.md`.
 - El label del switch (`switches.label`) sigue siendo el nombre del aparato en la lista de la consola. **No** se pinta en el círculo. El círculo muestra el nombre de la **página**.
 
 ### 9.2 Lista de páginas
@@ -439,6 +440,7 @@ Hoy: `{ rev, recipes[] }` con `channelId`. El Round necesita además `pages[]` c
   rev: 12,
   product: "round",
   pageSwipeAxis: "horizontal",          // o "vertical"
+  screenTimeoutSec: 30,                 // 0 = always on; default 30
   pages: [
     {
       id: "p1",
@@ -500,7 +502,7 @@ Hoy `recipes` es unique `(switch_id, channel_id, event)` y `event` está checkea
 Necesario:
 
 - Discriminar producto en `switches` (`product` text: `simple` | `round`).
-- Ajustes de Round en el switch: `page_swipe_axis`.
+- Ajustes de Round en el switch: `page_swipe_axis`, `screen_timeout_sec` (default 30; 0 = always on).
 - Tabla (o JSON) de **páginas** por switch: `id`, `name`, `sort_order`, `theme`, `group` (room/zone + grouped_light rid), `dim` (`group` \| `lights` \| null).
 - Recetas del Round ligadas a `page_id` + `event` (`short` | `double_click`).
 - `recall_scene` en Round guarda **varios** `rid` ordenados (tabla hija o JSON), no un solo `target_rid`.
@@ -520,13 +522,15 @@ Límites que el server valida:
 | Escenas por lista | 1–8 | Ciclo usable en pared; JSON/NVS |
 | Grupo por página | 1 room o zona, obligatorio | Filtra luces y escenas |
 | Luces en `dim.mode=lights` | las de tap/doble, ≤ 2 | Un PUT por luz on |
+| Screen timeout | 0 o 10–600 s; default 30 | Reposo del disco; 0 = always on |
 
 ---
 
 ## 13. Firmware (Round)
 
 - Poll igual: sin recetas/páginas ~1 min; con config al boot y cada 1 h. El dedo no espera.
-- NVS guarda `rev`, eje, páginas (id, nombre, theme, group, `dim`), recetas (listas de escenas con `rid` + `name` ASCII), índice de página activa, último `rid` de escena por gesto (caché).
+- NVS guarda `rev`, eje, `screenTimeoutSec`, páginas (id, nombre, theme, group, `dim`), recetas (listas de escenas con `rid` + `name` ASCII), índice de página activa, último `rid` de escena por gesto (caché).
+- Reposo de pantalla: `docs/idle-display.md`. BL off tras timeout; primer toque despierta y no actúa.
 - Aro `mode: lights`: GET de esos rid + PUT a las on (o prender el set si todas off). No copiar esos GET en el stack del loop.
 - Rotar escenas: GET de estado al Bridge + PUT de la siguiente (LAN). No llama a la consola.
 - Al cambiar de página: pintar de inmediato, GET de estado Hue del nuevo destino (on/brillo) en background. Un swipe no se bloquea a la red.
@@ -588,7 +592,7 @@ Simple-switch: cero migración.
 - Nombre de página editado **en el círculo**.
 - Theme con hex libre.
 - Animación de slide entre páginas.
-- Reloj / screensaver / widgets en una página.
+- Reloj / screensaver / widgets en una página. El reposo negro (`docs/idle-display.md`) no es un screensaver.
 - Páginas compartidas entre varios aparatos.
 - Un Round hablando con dos Bridges.
 - Cambiar `hue-simple-switch` ni su máquina de double-click de GPIO.
@@ -623,6 +627,7 @@ Estas no son código. Son el default si no se dice lo contrario.
 22. **Tap = velador y doble = off del grupo** → `dim.mode = group` (regla 2), no las luces sueltas.
 23. **Toques mientras Hue responde:** el disco sigue aceptando input. Ack optimista (invert, fill, escena, aro). Last-wins. Sin `UI_BUSY` en Ready. `docs/input-during-hue.md`.
 24. **Tap = luz A y doble = luz B** (dos `light` distintas): el fill del disco se parte (izquierda = tap, derecha = doble). El área táctil y los gestos no cambian. Cada lado guarda el on de su `rid`; el toggle no usa un bit único de página. Cualquier otro layout: disco entero.
+25. **Reposo de pantalla:** timeout por aparato en consola (default 30 s, 0 = always on). Disco negro; primer toque solo despierta. `docs/idle-display.md`.
 
 ---
 
@@ -650,5 +655,6 @@ Esta feature está **lista** cuando:
 - Un swipe en el eje configurado cambia de página **sin** llamar a Vercel ni al Bridge.
 - Tap / doble de esa página ejecutan NVS → Bridge **sin** congelar el toque (`docs/input-during-hue.md`). Swipe cambia de página. No hay hold de pantalla.
 - Un simple-switch en la misma consola sigue viéndose como canales GPIO.
+- Screen timeout en consola; el disco se apaga solo y el primer toque en negro no dispara receta (`docs/idle-display.md`).
 
 La revisión de grupo + `dim.mode` no está en el firmware/consola actuales hasta que se implemente. El resto de páginas v1 ya corre.

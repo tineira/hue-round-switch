@@ -72,6 +72,9 @@ inline bool gSecondTap = false;
 inline unsigned long gTapWaitMs = 0;
 inline bool gSceneHave = false;
 inline char gSceneName[25] = {0};
+inline bool gScreenIdle = false;  // BL off; el primer toque solo despierta
+inline bool gIdleWakeHold = false;
+inline unsigned long gIdleLastMs = 0;
 
 inline UiScreen uiFromRecipes() { return gPageCount > 0 ? UI_READY : UI_EMPTY; }
 
@@ -233,12 +236,50 @@ inline void uiDrawLevel() {
   gBriShown = pct;
 }
 
+inline void uiPaint();
+
+inline void uiIdleEnter() {
+  if (gScreenIdle) {
+    return;
+  }
+  gScreenIdle = true;
+  gIdleWakeHold = false;
+  gTapWaitDouble = false;
+  gSecondTap = false;
+  gUiPressed = false;
+  displayIdlePanel();
+  LOG("display idle\n");
+}
+
+inline void uiIdleWake(unsigned long now) {
+  displayWakePanel();
+  gScreenIdle = false;
+  gIdleWakeHold = true;
+  gNeedFullPaint = false;
+  gNeedHueState = true;
+  gIdleLastMs = now;
+  gTapWaitDouble = false;
+  gSecondTap = false;
+  uiPaint();
+  LOG("display wake\n");
+}
+
+inline void uiIdleNoteTouch(unsigned long now) { gIdleLastMs = now; }
+
 inline void uiSet(UiScreen s) {
   if (s == UI_ERROR) {
     gUiErrorUntilMs = millis() + 2000;
   }
+  if (gScreenIdle && s != UI_READY && s != UI_EMPTY) {
+    displayWakePanel();
+    gScreenIdle = false;
+    gIdleWakeHold = false;
+  }
   if (gUi != s) {
     gUi = s;
+    if (s == UI_READY || s == UI_EMPTY) {
+      gIdleLastMs = millis();
+    }
   }
 }
 
@@ -325,7 +366,7 @@ inline void uiDrawPageDots(const PageTheme *t) {
 }
 
 inline void uiDrawReadyFace() {
-  if (!gDisplayOk || !gLcd) {
+  if (!gDisplayOk || !gLcd || gScreenIdle) {
     return;
   }
   const PageTheme *t = uiTheme();
@@ -366,6 +407,9 @@ inline void uiDrawReadyFace() {
 }
 
 inline void uiPaint() {
+  if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+    return;
+  }
   if (!gDisplayOk || !gLcd) {
     gUiPainted = gUi;
     return;
@@ -576,7 +620,7 @@ inline void uiLoadLevel() {
 }
 
 inline void uiSyncFace() {
-  if (gUi != UI_READY && gUi != UI_EMPTY) {
+  if (gScreenIdle || (gUi != UI_READY && gUi != UI_EMPTY)) {
     return;
   }
   uiDrawReadyFace();
@@ -659,13 +703,16 @@ inline void uiHueJobPoll() {
         paint = true;
       }
     }
-    if (paint) {
+    if (paint && !gScreenIdle) {
       uiSyncFace();
     }
     return;
   }
   if (r.kind == HUE_JOB_RECIPE) {
     if (!r.ok) {
+      if (gScreenIdle) {
+        return;
+      }
       if (gUi == UI_READY || gUi == UI_EMPTY) {
         gUiPressed = false;
         uiSet(UI_ERROR);
@@ -683,11 +730,13 @@ inline void uiHueJobPoll() {
         gLightOn = r.on;
         gLightOnKnown = true;
       }
-      uiSyncFace();
+      if (!gScreenIdle) {
+        uiSyncFace();
+      }
     }
     return;
   }
-  if (!r.ok && (gUi == UI_READY || gUi == UI_EMPTY)) {
+  if (!r.ok && !gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
     gUiPressed = false;
     uiSet(UI_ERROR);
     uiPaint();
@@ -712,12 +761,15 @@ inline void uiOnPageChanged() {
   gNeedHueState = true;
   const Page *p = pagesActive();
   LOG("page %u/%u %s\n", gPageIndex + 1, gPageCount, p ? p->name : "");
-  if (gUi == UI_READY || gUi == UI_EMPTY) {
+  if (!gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
     uiPaint();
   }
 }
 
 inline bool uiFireEvent(const char *event) {
+  if (gScreenIdle || gIdleWakeHold) {
+    return false;
+  }
   if (gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING || gUi == UI_PAIRING ||
       gUi == UI_BOOT) {
     return false;
@@ -774,15 +826,31 @@ inline void uiTick(unsigned long now) {
   if (gUi == UI_ERROR && now >= gUiErrorUntilMs) {
     uiSet(uiFromRecipes());
   }
+  if (!gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY) && gScreenTimeoutSec > 0 && !gTouchDown &&
+      !gIdleWakeHold) {
+    if (gIdleLastMs == 0) {
+      gIdleLastMs = now;
+    } else if (now - gIdleLastMs >= (unsigned long)gScreenTimeoutSec * 1000UL) {
+      uiIdleEnter();
+    }
+  }
   if (gNeedFullPaint) {
     gNeedFullPaint = false;
-    uiPaint();
+    if (!gScreenIdle) {
+      uiPaint();
+    }
   }
   if (gUi != gUiPainted) {
+    if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+      return;
+    }
     if (gUi == UI_READY) {
       gNeedHueState = true;
     }
     uiPaint();
+    return;
+  }
+  if (gScreenIdle) {
     return;
   }
   if (uiNeedsPulse(gUi) && (now - gUiPulseMs) >= 180) {
@@ -804,6 +872,9 @@ inline void uiTick(unsigned long now) {
 }
 
 inline bool uiDimPut(int pct) {
+  if (gScreenIdle || gIdleWakeHold) {
+    return false;
+  }
   const Page *p = pagesActive();
   if (!p || !uiHasDim()) {
     return false;
@@ -828,6 +899,7 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   if (!uiTouchToPct(x, y, &pct)) {
     return;
   }
+  uiIdleNoteTouch(millis());
   if (gDimHavePct && abs(pct - gBriPct) > 18) {
     return;
   }
@@ -853,7 +925,7 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
 }
 
 inline bool uiTrySwipe(int16_t x, int16_t y) {
-  if (gSwipeDone || gPageCount <= 1 || gTouchMode != TOUCH_CENTER) {
+  if (gScreenIdle || gIdleWakeHold || gSwipeDone || gPageCount <= 1 || gTouchMode != TOUCH_CENTER) {
     return false;
   }
   const int16_t dx = (int16_t)(x - gTouchStartX);
@@ -888,6 +960,20 @@ inline bool uiTrySwipe(int16_t x, int16_t y) {
 }
 
 inline void uiTouchEnd(unsigned long now) {
+  uiIdleNoteTouch(now);
+  if (gIdleWakeHold) {
+    gIdleWakeHold = false;
+    gTouchDown = false;
+    gUiPressed = false;
+    gTouchMode = TOUCH_IDLE;
+    gSwipeDone = false;
+    gDimDragging = false;
+    gDimHavePct = false;
+    gSecondTap = false;
+    gTapWaitDouble = false;
+    gTouchIgnoreUntil = now + 40;
+    return;
+  }
   if (gDimDragging) {
     if (gBriKnown) {
       uiDimPut(gBriPct);
@@ -937,6 +1023,26 @@ inline void uiPollTouch(unsigned long now) {
   }
   const bool moved = hasPt && (abs(x - gTouchX) + abs(y - gTouchY) >= 2);
 
+  if (gScreenIdle) {
+    if (!irq && !hasPt) {
+      return;
+    }
+    uiIdleWake(now);
+    gTouchDown = true;
+    gIdleWakeHold = true;
+    gTouchLastPtMs = now;
+    gTouchX = hasPt ? x : -1;
+    gTouchY = hasPt ? y : -1;
+    gTouchStartX = gTouchX;
+    gTouchStartY = gTouchY;
+    gSwipeDone = false;
+    gDimDragging = false;
+    gDimHavePct = false;
+    gUiPressed = false;
+    gTouchMode = TOUCH_IDLE;
+    return;
+  }
+
   if (gTouchDown) {
     if (!hasPt && (now - gTouchLastPtMs) >= 80) {
       uiTouchEnd(now);
@@ -968,6 +1074,7 @@ inline void uiPollTouch(unsigned long now) {
     gTouchStartX = x;
     gTouchStartY = y;
     gSwipeDone = false;
+    uiIdleNoteTouch(now);
     if (inRing && uiHasDim()) {
       gTouchMode = TOUCH_RING;
       gDimDragging = true;
