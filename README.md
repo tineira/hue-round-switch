@@ -9,7 +9,7 @@ Misma consola que `hue-simple-switch`: [hue.tineira.com](https://hue.tineira.com
 1. Copia `config.example.h` a `config.h` y rellena `WIFI_SSID` / `WIFI_PASSWORD` (red **2.4 GHz**), `CONSOLE_URL` y `CONSOLE_TOKEN` (API key de aparato en la consola).
 2. El XIAO busca el Bridge por mDNS y puede emparejar la key Hue (pantalla: *Press the Bridge button*). Quedan en flash.
 3. Se registra en la consola (`POST /api/device/register`) con el canal virtual `c1` y pide recetas (`GET /api/device/config`).
-4. En la consola, asigna la receta de **1** (`short`, p. ej. toggle de un room). El tap **no** espera a Vercel: NVS → Bridge.
+4. En la consola, asigna la receta de **1** (`short`, p. ej. toggle de un room). El tap **no** espera a Vercel: NVS → Bridge. El aro alrededor del círculo regula el brillo de ese mismo destino (no de una escena).
 
 Arduino IDE: abre `hue-round-switch.ino`, placa **XIAO_ESP32S3**, PSRAM **OPI**, USB CDC on boot **Enabled**.
 

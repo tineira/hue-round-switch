@@ -13,6 +13,7 @@ static const unsigned long kLongPressMs = 3000;
 
 // El .ino cuelga el pulso de la pantalla durante el POST de emparejado.
 inline void (*gOnHueWait)() = nullptr;
+inline void (*gOnHuePairing)(bool pairing) = nullptr;
 
 inline String gHueBridgeId;
 
@@ -173,6 +174,9 @@ inline bool huePairAppKey() {
   }
 
   Serial.println("Pairing: press the Bridge link button");
+  if (gOnHuePairing) {
+    gOnHuePairing(true);
+  }
   const unsigned long start = millis();
   while (millis() - start < kPairTimeoutMs) {
     hueBlink(millis() - start);
@@ -184,6 +188,9 @@ inline bool huePairAppKey() {
       gHueAppKey = user;
       digitalWrite(LED_BUILTIN, HIGH);
       Serial.println("Paired (key stored in flash)");
+      if (gOnHuePairing) {
+        gOnHuePairing(false);
+      }
       return true;
     }
     if (body.indexOf("link button not pressed") < 0 && code > 0) {
@@ -196,6 +203,9 @@ inline bool huePairAppKey() {
   }
   digitalWrite(LED_BUILTIN, LOW);
   Serial.println("Pairing timeout");
+  if (gOnHuePairing) {
+    gOnHuePairing(false);
+  }
   return false;
 }
 

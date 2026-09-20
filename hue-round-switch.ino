@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include "config.h"
 
-#define FIRMWARE_VERSION "0.1.0"
+#define FIRMWARE_VERSION "0.2.0"
 
 String gHueBridgeIp;
 String gHueAppKey;
@@ -37,9 +37,13 @@ static void afterWifiUp() {
   Serial.printf("mac %s\n", deviceMacHex().c_str());
   digitalWrite(LED_BUILTIN, HIGH);
 
-  uiSet(UI_PAIRING);
+  uiSet(UI_LOADING);
   uiPaint();
   gOnHueWait = []() { uiTick(millis()); };
+  gOnHuePairing = [](bool pairing) {
+    uiSet(pairing ? UI_PAIRING : UI_LOADING);
+    uiPaint();
+  };
 
   if (!hueEnsureReady()) {
     Serial.println("Hue setup failed - press Bridge button if pairing, check Wi-Fi LAN");
@@ -53,8 +57,11 @@ static void afterWifiUp() {
   recipesBindBridge(gHueBridgeId);
   consoleBootSync();
   uiSet(uiFromRecipes());
+  if (gUi == UI_READY) {
+    uiLoadLevel();
+  }
   uiPaint();
-  Serial.println("tap c1 = recipe short. BOOT hold 3s = re-pair.");
+  Serial.println("tap c1 = recipe. ring = dim. BOOT hold 3s = re-pair.");
 }
 
 void setup() {
@@ -122,7 +129,9 @@ void loop() {
   bootPoll(now);
   if (gHueReady) {
     uiPollTouch(now);
-    consolePollTick(now);
+    if (!gDimDragging) {
+      consolePollTick(now);
+    }
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {
       const UiScreen next = uiFromRecipes();
       if (gUi != UI_ERROR && next != gUi) {

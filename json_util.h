@@ -162,6 +162,40 @@ inline bool jsonHueOn(const char *json, bool *on) {
   return false;
 }
 
+inline bool jsonHueBrightness(const char *json, int *pct) {
+  if (!json || !pct) {
+    return false;
+  }
+  const char *block = strstr(json, "\"dimming\"");
+  if (!block) {
+    return false;
+  }
+  const char *p = strstr(block, "\"brightness\"");
+  if (!p) {
+    return false;
+  }
+  p = strchr(p, ':');
+  if (!p) {
+    return false;
+  }
+  p++;
+  while (*p == ' ' || *p == '\n' || *p == '\t') {
+    p++;
+  }
+  if (*p != '-' && (*p < '0' || *p > '9')) {
+    return false;
+  }
+  int v = (int)(atof(p) + 0.5f);
+  if (v < 0) {
+    v = 0;
+  }
+  if (v > 100) {
+    v = 100;
+  }
+  *pct = v;
+  return true;
+}
+
 // Rid cuya pareja rtype coincide (p. ej. grouped_light en services[]).
 inline bool jsonFindRidByRtype(const char *json, const char *rtype, char *out, size_t outSz) {
   if (!json || !rtype || !out || outSz < 2) {

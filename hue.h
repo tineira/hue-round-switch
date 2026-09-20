@@ -20,7 +20,7 @@ extern String gHueAppKey;
 // setInsecure() evita validar esa CA (solo LAN, no cloud).
 
 inline int hueHttp(const String &url, const char *method, const char *body, String *response, bool withKey,
-                   bool insecure) {
+                   bool insecure, int timeoutMs = 8000) {
   NetworkClientSecure client;
   if (insecure) {
     client.setInsecure();
@@ -31,7 +31,7 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
   if (!http.begin(client, url)) {
     return -1;
   }
-  http.setTimeout(8000);
+  http.setTimeout(timeoutMs > 0 ? timeoutMs : 8000);
   if (withKey && gHueAppKey.length()) {
     http.addHeader("hue-application-key", gHueAppKey);
   }
@@ -140,6 +140,47 @@ inline bool hueRecallScene(const char *rid) {
     Serial.println(body);
     return false;
   }
+  return true;
+}
+
+inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !pct) {
+    return false;
+  }
+  String body;
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true, 4000);
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("Hue GET dim %s/%s %d\n", rtype, rid, code);
+    return false;
+  }
+  if (!jsonHueBrightness(body.c_str(), pct)) {
+    return false;
+  }
+  if (*pct < 1) {
+    *pct = 1;
+  }
+  return true;
+}
+
+inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
+    return false;
+  }
+  if (pct < 1) {
+    pct = 1;
+  }
+  if (pct > 100) {
+    pct = 100;
+  }
+  char payload[72];
+  snprintf(payload, sizeof(payload), "{\"on\":{\"on\":true},\"dimming\":{\"brightness\":%d}}", pct);
+  String body;
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true, 4000);
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("Hue PUT dim %s/%s %d -> %d %s\n", rtype, rid, code, pct, body.c_str());
+    return false;
+  }
+  Serial.printf("Hue dim %d%%\n", pct);
   return true;
 }
 

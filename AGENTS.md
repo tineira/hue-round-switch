@@ -56,6 +56,8 @@ Screen, not GPIO contacts. The console still expects `{ id, gpio, label, kind }`
 
 `gpio: 0` exists only because the console rejects missing/`< 0` gpio. Do not `pinMode` it as a maintained contact. Physical BOOT (GPIO 0, hold 3 s) is re-pair Hue, not a recipe.
 
+Center tap fires the console recipe. The outer ring is brightness for the same target when it is `light` or `grouped_light` (not a scene): finger position on the arc is 1–100, PUT on release. CHSC6X coords are often 0–127 and must be scaled to 240. No extra console slot.
+
 More on-screen channels later. Recipes are assigned in the web console, not on the circle.
 
 ## Code conventions

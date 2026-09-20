@@ -12,6 +12,9 @@ static const uint8_t kTouchCst = 0x15;
 
 inline uint8_t gTouchAddr = kTouchChsc;
 inline bool gTouchFound = false;
+inline bool gTouchFullRange = false;  // true si el chip reporta 0..239
+inline uint8_t gTouchRawX = 0;
+inline uint8_t gTouchRawY = 0;
 
 inline void touchScanI2c() {
   Serial.print("I2C:");
@@ -43,43 +46,52 @@ inline void touchBegin() {
   touchScanI2c();
 }
 
-inline bool touchIrqPressed() {
-  if (digitalRead(kPinTouchInt) != LOW) {
-    delay(1);
-    if (digitalRead(kPinTouchInt) != LOW) {
-      return false;
-    }
+inline bool touchIrqPressed() { return digitalRead(kPinTouchInt) == LOW; }
+
+inline void touchMapRaw(uint8_t rawx, uint8_t rawy, int16_t *x, int16_t *y) {
+  gTouchRawX = rawx;
+  gTouchRawY = rawy;
+  if (rawx > 127 || rawy > 127) {
+    gTouchFullRange = true;
   }
-  return true;
+  if (!gTouchFullRange) {
+    *x = (int16_t)((int32_t)rawx * (kScreenW - 1) / 127);
+    *y = (int16_t)((int32_t)rawy * (kScreenH - 1) / 127);
+  } else {
+    *x = rawx;
+    *y = rawy;
+  }
 }
 
 inline bool touchReadXY(int16_t *x, int16_t *y) {
   if (!x || !y) {
     return false;
   }
-  const uint8_t n = Wire.requestFrom((int)gTouchAddr, 7);
+  const uint8_t n = Wire.requestFrom((int)gTouchAddr, 5);
   if (n < 5) {
     return false;
   }
-  uint8_t t[7] = {0};
-  Wire.readBytes(t, n > 7 ? 7 : n);
-  // CHSC6X: t[0]==1, x=t[2], y=t[4]
-  if (t[0] == 0x01 && n >= 5) {
-    *x = t[2];
-    *y = t[4];
-    return *x < kScreenW && *y < kScreenH;
-  }
-  // CST816S: points in t[2], x/y packed in t[3..6]
-  if (n >= 7 && t[2]) {
-    *x = ((t[3] & 0x0F) << 8) | t[4];
-    *y = ((t[5] & 0x0F) << 8) | t[6];
-    return *x < kScreenW && *y < kScreenH;
+  uint8_t t[5] = {0};
+  Wire.readBytes(t, 5);
+  // CHSC6X Seeed: t[0]==1, x=t[2], y=t[4] (a veces 0..127, no 0..239)
+  if (t[0] == 0x01) {
+    touchMapRaw(t[2], t[4], x, y);
+    return true;
   }
   return false;
 }
 
-inline bool touchHitButton(int16_t x, int16_t y, int16_t radius) {
+inline int32_t touchR2(int16_t x, int16_t y) {
   const int32_t dx = (int32_t)x - kScreenCx;
   const int32_t dy = (int32_t)y - kScreenCy;
-  return dx * dx + dy * dy <= (int32_t)radius * radius;
+  return dx * dx + dy * dy;
+}
+
+inline bool touchHitButton(int16_t x, int16_t y, int16_t radius) {
+  return touchR2(x, y) <= (int32_t)radius * radius;
+}
+
+inline bool touchHitRing(int16_t x, int16_t y, int16_t inner, int16_t outer) {
+  const int32_t r2 = touchR2(x, y);
+  return r2 >= (int32_t)inner * inner && r2 <= (int32_t)outer * outer;
 }
