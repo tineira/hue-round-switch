@@ -25,6 +25,7 @@ struct HueJob {
   char action[16];
   char rtype[16];
   char rid[40];
+  char rid2[40];
   uint8_t sceneCount;
   RecipeScene scenes[kMaxScenes];
   bool haveTargetOn;
@@ -43,6 +44,10 @@ struct HueJobResult {
   bool ok;
   bool haveOn;
   bool on;
+  bool haveTapOn;
+  bool tapOn;
+  bool haveDblOn;
+  bool dblOn;
   bool haveBri;
   int pct;
   bool haveScene;
@@ -192,7 +197,9 @@ inline HueArmResult hueJobArmRecipe(const char *pageId, const char *event, bool 
   } else if (strcmp(r->action, "off") == 0) {
     job.haveTargetOn = true;
     job.targetOn = false;
-    pagesSetLastSceneRid("");
+    if (!recipesTwoChildLights(pageId, nullptr, nullptr)) {
+      pagesSetLastSceneRid("");
+    }
     if (nowOn) {
       *nowOn = false;
     }
@@ -209,7 +216,7 @@ inline HueArmResult hueJobArmRecipe(const char *pageId, const char *event, bool 
     if (nowOn) {
       *nowOn = nextOn;
     }
-    if (!nextOn) {
+    if (!nextOn && !recipesTwoChildLights(pageId, nullptr, nullptr)) {
       pagesSetLastSceneRid("");
     }
   } else {
@@ -242,11 +249,19 @@ inline bool hueJobArmRefresh(const char *pageId) {
     job.sceneCount = sc->sceneCount;
     memcpy(job.scenes, sc->scenes, sizeof(job.scenes));
   }
-  const HueRecipe *sh = recipesFind(pageId, "short");
-  if (sh && sh->rid[0] &&
-      (strcmp(sh->rtype, "light") == 0 || strcmp(sh->rtype, "grouped_light") == 0)) {
-    recipeCopyField(job.rtype, sizeof(job.rtype), sh->rtype);
-    recipeCopyField(job.rid, sizeof(job.rid), sh->rid);
+  const HueRecipe *tap = nullptr;
+  const HueRecipe *dbl = nullptr;
+  if (recipesTwoChildLights(pageId, &tap, &dbl)) {
+    recipeCopyField(job.rtype, sizeof(job.rtype), "light");
+    recipeCopyField(job.rid, sizeof(job.rid), tap->rid);
+    recipeCopyField(job.rid2, sizeof(job.rid2), dbl->rid);
+  } else {
+    const HueRecipe *sh = recipesFind(pageId, "short");
+    if (sh && sh->rid[0] &&
+        (strcmp(sh->rtype, "light") == 0 || strcmp(sh->rtype, "grouped_light") == 0)) {
+      recipeCopyField(job.rtype, sizeof(job.rtype), sh->rtype);
+      recipeCopyField(job.rid, sizeof(job.rid), sh->rid);
+    }
   }
   return hueJobPost(job, false);
 }
@@ -327,6 +342,37 @@ inline HueJobResult hueJobRunRefresh(const HueJob &job) {
              (strcmp(job.rtype, "light") == 0 || strcmp(job.rtype, "grouped_light") == 0)) {
     rtype = job.rtype;
     rid = job.rid;
+  }
+
+  if (job.rid[0] && job.rid2[0] && strcmp(job.rtype, "light") == 0) {
+    bool tapOn = false;
+    bool dblOn = false;
+    int tapBri = 50;
+    int dblBri = 50;
+    const bool gotTap = hueGetLightState("light", job.rid, &tapOn, &tapBri);
+    const bool gotDbl = hueGetLightState("light", job.rid2, &dblOn, &dblBri);
+    if (gotTap) {
+      out.haveTapOn = true;
+      out.tapOn = tapOn;
+    }
+    if (gotDbl) {
+      out.haveDblOn = true;
+      out.dblOn = dblOn;
+    }
+    if (gotTap || gotDbl) {
+      out.haveOn = true;
+      out.on = (gotTap && tapOn) || (gotDbl && dblOn);
+      out.haveBri = true;
+      if (gotTap && tapOn) {
+        out.pct = tapBri < 1 ? 1 : (tapBri > 100 ? 100 : tapBri);
+      } else if (gotDbl && dblOn) {
+        out.pct = dblBri < 1 ? 1 : (dblBri > 100 ? 100 : dblBri);
+      } else {
+        const int bri = gotTap ? tapBri : dblBri;
+        out.pct = bri < 1 ? 1 : (bri > 100 ? 100 : bri);
+      }
+    }
+    return out;
   }
 
   if (rid && rid[0]) {

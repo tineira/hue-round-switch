@@ -622,6 +622,7 @@ Estas no son código. Son el default si no se dice lo contrario.
 21. **Aro como la app Hue:** solo luces on del destino. Si el destino está todo off, el drag prende a ese %. `mode: lights` usa % absoluto en cada luz on, no un scale relativo.
 22. **Tap = velador y doble = off del grupo** → `dim.mode = group` (regla 2), no las luces sueltas.
 23. **Toques mientras Hue responde:** el disco sigue aceptando input. Ack optimista (invert, fill, escena, aro). Last-wins. Sin `UI_BUSY` en Ready. `docs/input-during-hue.md`.
+24. **Tap = luz A y doble = luz B** (dos `light` distintas): el fill del disco se parte (izquierda = tap, derecha = doble). El área táctil y los gestos no cambian. Cada lado guarda el on de su `rid`; el toggle no usa un bit único de página. Cualquier otro layout: disco entero.
 
 ---
 

@@ -406,6 +406,28 @@ inline const HueRecipe *recipesFind(const char *pageId, const char *event) {
   return nullptr;
 }
 
+inline bool recipeIsChildLight(const HueRecipe *r) {
+  return r && r->rid[0] && strcmp(r->rtype, "light") == 0 &&
+         (strcmp(r->action, "toggle") == 0 || strcmp(r->action, "on") == 0 ||
+          strcmp(r->action, "off") == 0);
+}
+
+// Tap y doble son dos luces hijas distintas: fill partido, estado por rid.
+inline bool recipesTwoChildLights(const char *pageId, const HueRecipe **tap, const HueRecipe **dbl) {
+  const HueRecipe *a = recipesFind(pageId, "short");
+  const HueRecipe *b = recipesFind(pageId, "double_click");
+  if (!recipeIsChildLight(a) || !recipeIsChildLight(b) || strcmp(a->rid, b->rid) == 0) {
+    return false;
+  }
+  if (tap) {
+    *tap = a;
+  }
+  if (dbl) {
+    *dbl = b;
+  }
+  return true;
+}
+
 inline const HueRecipe *recipesFindScene(const char *pageId) {
   const HueRecipe *r = recipesFind(pageId, "short");
   if (r && strcmp(r->action, "recall_scene") == 0 && r->sceneCount > 0) {

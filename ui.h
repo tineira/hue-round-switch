@@ -54,6 +54,10 @@ inline int gBriShown = -1;
 inline int gBriLastSent = -1;
 inline bool gLightOn = true;
 inline bool gLightOnKnown = false;
+inline bool gTapOn = false;
+inline bool gTapOnKnown = false;
+inline bool gDblOn = false;
+inline bool gDblOnKnown = false;
 inline unsigned long gLightPollMs = 0;
 inline unsigned long gTouchLastPtMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
@@ -75,7 +79,14 @@ inline bool uiPageHasDouble() { return recipesFind(pagesActiveId(), "double_clic
 
 inline bool uiHasDim() { return pagesHasDim(); }
 
-inline bool uiLightLit() { return !gLightOnKnown || gLightOn; }
+inline bool uiSplitTwoLights() { return recipesTwoChildLights(pagesActiveId(), nullptr, nullptr); }
+
+inline bool uiLightLit() {
+  if (uiSplitTwoLights()) {
+    return (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
+  }
+  return !gLightOnKnown || gLightOn;
+}
 
 inline const PageTheme *uiTheme() {
   if (gUi == UI_READY || gUi == UI_BUSY || gUi == UI_EMPTY) {
@@ -119,6 +130,28 @@ inline int16_t uiDiscChord(int16_t y, int16_t r) {
     return 0;
   }
   return (int16_t)(2.0f * sqrtf((float)(r2 - d2)));
+}
+
+inline void uiFillDiscSide(bool right, int16_t radius, uint16_t color) {
+  if (!gDisplayOk || !gLcd || radius <= 0) {
+    return;
+  }
+  for (int16_t y = kScreenCy - radius; y <= kScreenCy + radius; y++) {
+    const int16_t w = uiDiscChord(y, radius);
+    if (w <= 1) {
+      continue;
+    }
+    const int16_t xL = kScreenCx - w / 2;
+    const int16_t xR = xL + w - 1;
+    if (right) {
+      if (xR >= kScreenCx) {
+        gLcd->drawFastHLine(kScreenCx, y, xR - kScreenCx + 1, color);
+      }
+    } else if (xL < kScreenCx) {
+      const int16_t xEnd = xR < kScreenCx ? xR : (int16_t)(kScreenCx - 1);
+      gLcd->drawFastHLine(xL, y, xEnd - xL + 1, color);
+    }
+  }
 }
 
 // fillArc: 0° = 3 o'clock, horario. El aro de brillo va de 135° a 135+270°.
@@ -296,11 +329,28 @@ inline void uiDrawReadyFace() {
     return;
   }
   const PageTheme *t = uiTheme();
+  const bool split = uiSplitTwoLights();
+  const bool tapLit = !gTapOnKnown || gTapOn;
+  const bool dblLit = !gDblOnKnown || gDblOn;
   const bool lit = uiLightLit();
-  const uint16_t fill = uiFillCol(t);
-  const uint16_t inner = gUiPressed ? (lit ? t->accent : colorMix565(fill, t->ink, 80)) : fill;
-  gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, fill);
-  gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius - (gUiPressed ? 4 : 6), inner);
+  const int16_t innerR = kBtnRadius - (gUiPressed ? 4 : 6);
+  if (split) {
+    const uint16_t left = gTapOnKnown && gTapOn ? t->fillOn : t->fillOff;
+    const uint16_t right = gDblOnKnown && gDblOn ? t->fillOn : t->fillOff;
+    uiFillDiscSide(false, kBtnRadius, left);
+    uiFillDiscSide(true, kBtnRadius, right);
+    const uint16_t leftIn =
+        gUiPressed ? (tapLit ? t->accent : colorMix565(left, t->ink, 80)) : left;
+    const uint16_t rightIn =
+        gUiPressed ? (dblLit ? t->accent : colorMix565(right, t->ink, 80)) : right;
+    uiFillDiscSide(false, innerR, leftIn);
+    uiFillDiscSide(true, innerR, rightIn);
+  } else {
+    const uint16_t fill = uiFillCol(t);
+    const uint16_t inner = gUiPressed ? (lit ? t->accent : colorMix565(fill, t->ink, 80)) : fill;
+    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, fill);
+    gLcd->fillCircle(kScreenCx, kScreenCy, innerR, inner);
+  }
   uiDrawRings(millis());
 
   const Page *p = pagesActive();
@@ -308,7 +358,7 @@ inline void uiDrawReadyFace() {
   const int16_t nameBudget = uiDiscChord(kNameY, kBtnRadius) - 16;
   displayTextEllipsis(name, kNameY, 2, uiInkCol(t), nameBudget, 1);
 
-  if (gSceneHave && gSceneName[0] && lit) {
+  if (!split && gSceneHave && gSceneName[0] && lit) {
     const int16_t sceneBudget = uiDiscChord(kSceneY, kBtnRadius) - 16;
     displayTextEllipsis(gSceneName, kSceneY, 1, uiSceneCol(t), sceneBudget, 8);
   }
@@ -562,7 +612,28 @@ inline void uiHueJobPoll() {
       return;
     }
     bool paint = false;
-    if (r.haveOn && (!gLightOnKnown || r.on != gLightOn)) {
+    if (r.haveTapOn && (!gTapOnKnown || r.tapOn != gTapOn)) {
+      gTapOn = r.tapOn;
+      gTapOnKnown = true;
+      paint = true;
+    } else if (r.haveTapOn) {
+      gTapOnKnown = true;
+    }
+    if (r.haveDblOn && (!gDblOnKnown || r.dblOn != gDblOn)) {
+      gDblOn = r.dblOn;
+      gDblOnKnown = true;
+      paint = true;
+    } else if (r.haveDblOn) {
+      gDblOnKnown = true;
+    }
+    if (r.haveTapOn || r.haveDblOn) {
+      const bool any = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
+      if (!gLightOnKnown || any != gLightOn) {
+        gLightOn = any;
+        paint = true;
+      }
+      gLightOnKnown = true;
+    } else if (r.haveOn && (!gLightOnKnown || r.on != gLightOn)) {
       gLightOn = r.on;
       gLightOnKnown = true;
       if (!r.on) {
@@ -603,6 +674,10 @@ inline void uiHueJobPoll() {
 inline void uiOnPageChanged() {
   gUiPressed = false;
   gLightOnKnown = false;
+  gTapOn = false;
+  gTapOnKnown = false;
+  gDblOn = false;
+  gDblOnKnown = false;
   gBriKnown = false;
   gBriLocal = false;
   gBriRid[0] = 0;
@@ -624,7 +699,15 @@ inline bool uiFireEvent(const char *event) {
       gUi == UI_BOOT) {
     return false;
   }
+  const bool split = uiSplitTwoLights();
   bool on = gLightOn;
+  if (split) {
+    if (event && strcmp(event, "double_click") == 0) {
+      on = gDblOnKnown && gDblOn;
+    } else {
+      on = gTapOnKnown && gTapOn;
+    }
+  }
   const HueArmResult fr = hueJobArmRecipe(pagesActiveId(), event, &on);
   if (fr == HUE_ARM_ERR) {
     gUiPressed = false;
@@ -633,6 +716,19 @@ inline bool uiFireEvent(const char *event) {
     return false;
   }
   if (fr == HUE_ARM_NONE) {
+    return true;
+  }
+  if (split) {
+    if (event && strcmp(event, "double_click") == 0) {
+      gDblOn = on;
+      gDblOnKnown = true;
+    } else {
+      gTapOn = on;
+      gTapOnKnown = true;
+    }
+    gLightOn = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
+    gLightOnKnown = true;
+    uiSyncFace();
     return true;
   }
   uiSetLightOn(on);
@@ -719,6 +815,12 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   if (!uiLightLit()) {
     gLightOn = true;
     gLightOnKnown = true;
+    if (uiSplitTwoLights()) {
+      gTapOn = true;
+      gTapOnKnown = true;
+      gDblOn = true;
+      gDblOnKnown = true;
+    }
     uiDrawReadyFace();
     gBriShown = -1;
   }
