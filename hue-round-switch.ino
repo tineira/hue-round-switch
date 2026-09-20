@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.7"
+#define FIRMWARE_VERSION "0.5.8"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -87,6 +87,7 @@ void setup() {
   bootBegin();
   displayBegin();
   touchBegin();
+  hueJobBegin();
 
   uiSet(UI_BOOT);
   uiPaint();
@@ -141,7 +142,7 @@ void loop() {
   bootPoll(now);
   if (gHueReady) {
     uiPollTouch(now);
-    if (!gDimDragging && !gTouchDown && !gTapWaitDouble) {
+    if (!gDimDragging && !gTouchDown && !gTapWaitDouble && !hueJobBusy()) {
       consolePollTick(now);
     }
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {

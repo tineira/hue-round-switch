@@ -3,6 +3,7 @@
 #include <math.h>
 #include "channels.h"
 #include "display.h"
+#include "hue_job.h"
 #include "pages.h"
 #include "recipes.h"
 #include "touch.h"
@@ -518,8 +519,10 @@ inline void uiApplyLastSceneName() {
 }
 
 inline void uiLoadLevel() {
-  uiRefreshState(false);
-  uiRefreshScene();
+  const char *id = pagesActiveId();
+  if (id && id[0] && !hueJobArmRefresh(id)) {
+    gNeedHueState = true;
+  }
 }
 
 inline void uiSyncFace() {
@@ -546,6 +549,57 @@ inline void uiSetLightOn(bool on) {
   }
 }
 
+inline void uiHueJobPoll() {
+  HueJobResult r;
+  if (!hueJobTakeResult(&r)) {
+    return;
+  }
+  if (strcmp(r.pageId, pagesActiveId()) != 0) {
+    return;
+  }
+  if (r.kind == HUE_JOB_REFRESH) {
+    if (gUi != UI_READY && gUi != UI_EMPTY) {
+      return;
+    }
+    bool paint = false;
+    if (r.haveOn && (!gLightOnKnown || r.on != gLightOn)) {
+      gLightOn = r.on;
+      gLightOnKnown = true;
+      if (!r.on) {
+        gSceneHave = false;
+        gSceneName[0] = 0;
+      }
+      paint = true;
+    } else if (r.haveOn) {
+      gLightOnKnown = true;
+    }
+    if (r.haveBri && !gBriLocal && uiHasDim()) {
+      const int pct = uiClampPct(r.pct);
+      if (!gBriKnown || pct != gBriPct) {
+        gBriPct = pct;
+        paint = true;
+      }
+      gBriKnown = true;
+    }
+    if (r.haveScene && (gLightOnKnown && gLightOn)) {
+      if (r.sceneHave != gSceneHave || strcmp(gSceneName, r.sceneName) != 0) {
+        gSceneHave = r.sceneHave;
+        recipeCopyField(gSceneName, sizeof(gSceneName), r.sceneName);
+        paint = true;
+      }
+    }
+    if (paint) {
+      uiSyncFace();
+    }
+    return;
+  }
+  if (!r.ok && (gUi == UI_READY || gUi == UI_EMPTY)) {
+    gUiPressed = false;
+    uiSet(UI_ERROR);
+    uiPaint();
+  }
+}
+
 inline void uiOnPageChanged() {
   gUiPressed = false;
   gLightOnKnown = false;
@@ -553,8 +607,10 @@ inline void uiOnPageChanged() {
   gBriLocal = false;
   gBriRid[0] = 0;
   gBriShown = -1;
+  gBriLastSent = -1;
   gSceneHave = false;
   gSceneName[0] = 0;
+  hueJobClearPending();
   gNeedHueState = true;
   const Page *p = pagesActive();
   LOG("page %u/%u %s\n", gPageIndex + 1, gPageCount, p ? p->name : "");
@@ -569,14 +625,14 @@ inline bool uiFireEvent(const char *event) {
     return false;
   }
   bool on = gLightOn;
-  const FireResult fr = recipeFire(pagesActiveId(), event, &on);
-  if (fr == FIRE_ERR) {
+  const HueArmResult fr = hueJobArmRecipe(pagesActiveId(), event, &on);
+  if (fr == HUE_ARM_ERR) {
     gUiPressed = false;
     uiSet(UI_ERROR);
     uiPaint();
     return false;
   }
-  if (fr == FIRE_NONE) {
+  if (fr == HUE_ARM_NONE) {
     return true;
   }
   uiSetLightOn(on);
@@ -588,6 +644,7 @@ inline bool uiFireEvent(const char *event) {
 }
 
 inline void uiTick(unsigned long now) {
+  uiHueJobPoll();
   if (gDimDragging) {
     return;
   }
@@ -615,20 +672,13 @@ inline void uiTick(unsigned long now) {
   }
   if ((gUi == UI_READY || gUi == UI_EMPTY) && !gTouchDown) {
     if (gNeedHueState) {
-      gNeedHueState = false;
-      gLightPollMs = now;
-      uiRefreshState(true);
-      uiRefreshScene();
-      uiSyncFace();
+      if (hueJobArmRefresh(pagesActiveId())) {
+        gNeedHueState = false;
+        gLightPollMs = now;
+      }
     } else if (now - gLightPollMs >= 20000) {
-      gLightPollMs = now;
-      const bool st = uiRefreshState(true);
-      const bool hadScene = gSceneHave;
-      char prevName[25];
-      memcpy(prevName, gSceneName, sizeof(prevName));
-      uiRefreshScene();
-      if (st || hadScene != gSceneHave || memcmp(prevName, gSceneName, sizeof(prevName)) != 0) {
-        uiSyncFace();
+      if (hueJobArmRefresh(pagesActiveId())) {
+        gLightPollMs = now;
       }
     }
   }
@@ -636,57 +686,14 @@ inline void uiTick(unsigned long now) {
 
 inline bool uiDimPut(int pct) {
   const Page *p = pagesActive();
-  if (!p || !uiHasDim() || WiFi.status() != WL_CONNECTED) {
+  if (!p || !uiHasDim()) {
     return false;
   }
   pct = uiClampPct(pct);
   if (pct == gBriLastSent) {
     return true;
   }
-
-  bool ok = false;
-  if (p->dimMode == PAGE_DIM_GROUP && p->dimGroupRid[0]) {
-    // Un PUT dimming al grouped_light; si el grupo está off, el Bridge prende.
-    ok = huePutDimming("grouped_light", p->dimGroupRid, pct, false);
-  } else if (p->dimMode == PAGE_DIM_LIGHTS && p->dimLightCount > 0) {
-    bool on[kMaxDimLights];
-    bool got[kMaxDimLights];
-    bool anyOn = false;
-    for (uint8_t i = 0; i < kMaxDimLights; i++) {
-      on[i] = false;
-      got[i] = false;
-    }
-    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
-      if (!p->dimLights[i][0]) {
-        continue;
-      }
-      bool lightOn = false;
-      if (!hueGetLightState("light", p->dimLights[i], &lightOn, nullptr)) {
-        continue;
-      }
-      got[i] = true;
-      on[i] = lightOn;
-      if (lightOn) {
-        anyOn = true;
-      }
-    }
-    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
-      if (!p->dimLights[i][0]) {
-        continue;
-      }
-      if (anyOn) {
-        if (!got[i] || !on[i]) {
-          continue;
-        }
-        if (huePutDimming("light", p->dimLights[i], pct, false)) {
-          ok = true;
-        }
-      } else if (huePutDimming("light", p->dimLights[i], pct, true)) {
-        ok = true;
-      }
-    }
-  }
-  if (!ok) {
+  if (!hueJobArmDim(p->id, pct)) {
     return false;
   }
   gBriLastSent = pct;
