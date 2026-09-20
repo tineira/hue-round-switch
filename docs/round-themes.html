@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Round Display — page theme prototypes</title>
+  <style>
+    :root {
+      --sans: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      --mono: "Cascadia Mono", "SF Mono", ui-monospace, Consolas, monospace;
+      --page: #12110f;
+      --page-fg: #f0ebe4;
+      --page-muted: #9a9086;
+      --page-line: #2e2a26;
+      --page-card: #1c1a17;
+      --keep: #c9a227;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background: var(--page);
+      color: var(--page-fg);
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      background: color-mix(in srgb, var(--page) 92%, black);
+      border-bottom: 1px solid var(--page-line);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    header p {
+      margin: 2px 0 0;
+      color: var(--page-muted);
+      font-size: 0.85rem;
+    }
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid var(--page-line);
+      background: var(--page-card);
+      color: var(--page-fg);
+      border-radius: 8px;
+      padding: 7px 12px;
+    }
+    button:hover { border-color: #5a5248; }
+    button.primary { background: #2a241c; border-color: #6a5a38; color: #f0e0b0; }
+    .count { color: var(--page-muted); font-size: 0.85rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px;
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .card {
+      background: var(--page-card);
+      border: 1px solid var(--page-line);
+      border-radius: 16px;
+      padding: 16px 16px 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .card.kept {
+      border-color: var(--keep);
+      box-shadow: 0 0 0 1px var(--keep) inset;
+    }
+    .dial {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+      box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+    }
+    .dial .bg { position: absolute; inset: 0; background: var(--t-bg); }
+    .dial .track,
+    .dial .level {
+      position: absolute;
+      inset: 6px;
+      border-radius: 50%;
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+              mask: radial-gradient(farthest-side, transparent calc(100% - 12px), #000 calc(100% - 11px));
+    }
+    .dial .track {
+      background: conic-gradient(
+        from 225deg,
+        var(--t-track) 0 270deg,
+        transparent 270deg 360deg
+      );
+    }
+    .dial .level {
+      background: conic-gradient(
+        from 225deg,
+        var(--t-accent) 0 170deg,
+        transparent 170deg 360deg
+      );
+    }
+    .dial .btn {
+      position: absolute;
+      inset: 26px;
+      border-radius: 50%;
+      background: var(--t-fill);
+      box-shadow: inset 0 0 0 2px var(--t-ring);
+    }
+    .dial .copy {
+      position: absolute;
+      inset: 26px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      pointer-events: none;
+      font-family: var(--mono);
+    }
+    .dial .name {
+      font-size: 15px;
+      letter-spacing: 0.4px;
+      color: var(--t-ink);
+      margin-bottom: 6px;
+    }
+    .dial .scene {
+      font-size: 9px;
+      letter-spacing: 0.2px;
+      /* ink over fill — mute-on-amber (Night) had no contrast */
+      color: color-mix(in srgb, var(--t-ink) 88%, var(--t-fill));
+      max-width: 78%;
+      line-height: 1.25;
+    }
+    .dial .dots {
+      position: absolute;
+      left: 50%;
+      bottom: 38px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 5px;
+    }
+    .dial .dots i {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--t-ink) 42%, var(--t-fill));
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--t-ink) 28%, transparent);
+      display: block;
+    }
+    .dial .dots i.on {
+      background: var(--t-ink);
+      box-shadow: none;
+    }
+    .meta { width: 100%; }
+    .meta h2 {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .meta .id {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--page-muted);
+    }
+    .meta p {
+      margin: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--page-muted);
+    }
+    .swatches { display: flex; gap: 4px; margin-top: 8px; }
+    .swatches b {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid rgb(255 255 255 / 12%);
+      display: block;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      margin-top: 4px;
+    }
+    .row button { flex: 1; font-size: 0.8rem; padding: 6px 8px; }
+    .row button.kept-btn {
+      background: #2a2410;
+      border-color: var(--keep);
+      color: #f0e0a0;
+    }
+    footer {
+      padding: 8px 24px 28px;
+      color: var(--page-muted);
+      font-size: 0.8rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    code { font-family: var(--mono); font-size: 0.78em; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Round Display — 20 page themes</h1>
+      <p>Visual spec for the console picker. Page name + active scene, no how-to copy. All 20 ship. Click one dial to select.</p>
+    </div>
+    <div class="tools">
+      <button type="button" id="allOn">All On</button>
+      <button type="button" id="allOff">All Off</button>
+      <button type="button" id="clearKeep">Clear kept</button>
+      <button type="button" class="primary" id="exportKeep">Copy kept ids</button>
+      <span class="count" id="keepCount">0 kept</span>
+    </div>
+  </header>
+  <main class="grid" id="grid"></main>
+  <footer>
+    Palette roles: background, fill on/off, accent (ring), track, ink, mute.
+    Ember matches the firmware on the desk today.
+    Light themes will look like a lamp on a dark wall — useful to see before you ship them.
+  </footer>
+  <script>
+    const THEMES = [
+      {
+        id: "ember",
+        name: "Ember",
+        blurb: "Current firmware. Charcoal, amber.",
+        bg: "#101410", ink: "#eee8e0", mute: "#7c7a74",
+        fillOn: "#a54a00", fillOff: "#212021", accent: "#ff9e00",
+        track: "#313131", error: "#f80000"
+      },
+      {
+        id: "night",
+        name: "Night",
+        blurb: "OLED black, electric amber.",
+        bg: "#050506", ink: "#f4f1ea", mute: "#d8cfc4",
+        fillOn: "#c47a10", fillOff: "#121214", accent: "#ffb020",
+        track: "#2a2a22", error: "#ff5555"
+      },
+      {
+        id: "coal",
+        name: "Coal",
+        blurb: "Almost off. Faint ember ring.",
+        bg: "#0a0a0a", ink: "#d8d0c8", mute: "#6a6660",
+        fillOn: "#5c2e12", fillOff: "#161616", accent: "#c45c18",
+        track: "#242424", error: "#c04040"
+      },
+      {
+        id: "graphite",
+        name: "Graphite",
+        blurb: "Zinc, champagne.",
+        bg: "#121314", ink: "#ecece8", mute: "#9a9ca0",
+        fillOn: "#6a5a40", fillOff: "#1c1d1f", accent: "#d4b483",
+        track: "#2e3035", error: "#d9897c"
+      },
+      {
+        id: "ink",
+        name: "Ink",
+        blurb: "Blue-black, teal.",
+        bg: "#0b1016", ink: "#e8eef6", mute: "#8fa0b5",
+        fillOn: "#0e4a48", fillOff: "#121a24", accent: "#3dd6c6",
+        track: "#243040", error: "#f07a72"
+      },
+      {
+        id: "ocean",
+        name: "Ocean",
+        blurb: "Navy, sky cyan.",
+        bg: "#071018", ink: "#dceef8", mute: "#7fa3bb",
+        fillOn: "#0a4a6a", fillOff: "#0d1b28", accent: "#38bdf8",
+        track: "#1c3348", error: "#fb7185"
+      },
+      {
+        id: "nord",
+        name: "Nord",
+        blurb: "Polar night, frost.",
+        bg: "#2e3440", ink: "#eceff4", mute: "#a0a8b8",
+        fillOn: "#4c566a", fillOff: "#3b4252", accent: "#88c0d0",
+        track: "#434c5e", error: "#bf616a"
+      },
+      {
+        id: "plum",
+        name: "Plum",
+        blurb: "Espresso, rose.",
+        bg: "#140f14", ink: "#f3e8ee", mute: "#b39aa8",
+        fillOn: "#6a3048", fillOff: "#1d161d", accent: "#e8a0b4",
+        track: "#3a2c36", error: "#e07a7a"
+      },
+      {
+        id: "violet",
+        name: "Violet",
+        blurb: "Deep purple, lavender.",
+        bg: "#120e18", ink: "#f0e8ff", mute: "#a090b8",
+        fillOn: "#4a3470", fillOff: "#1a1524", accent: "#c4a0ff",
+        track: "#322848", error: "#ff6a8a"
+      },
+      {
+        id: "dracula",
+        name: "Dracula",
+        blurb: "Purple, pink.",
+        bg: "#1e1f29", ink: "#f8f8f2", mute: "#b0b3c8",
+        fillOn: "#5a3d78", fillOff: "#282a36", accent: "#bd93f9",
+        track: "#44475a", error: "#ff5555"
+      },
+      {
+        id: "matrix",
+        name: "Matrix",
+        blurb: "Black, phosphor green.",
+        bg: "#020402", ink: "#d0ffd4", mute: "#5f9e68",
+        fillOn: "#0a3a14", fillOff: "#071208", accent: "#00ff41",
+        track: "#1a3d1e", error: "#ff4d4d"
+      },
+      {
+        id: "forest",
+        name: "Forest",
+        blurb: "Dark green, gold.",
+        bg: "#0c120e", ink: "#e8f0e6", mute: "#8fa88c",
+        fillOn: "#3a4a18", fillOff: "#151e17", accent: "#c9a227",
+        track: "#2a3a2c", error: "#e07a6a"
+      },
+      {
+        id: "copper",
+        name: "Copper",
+        blurb: "Warm metal, rust.",
+        bg: "#16100c", ink: "#f4ece4", mute: "#b09078",
+        fillOn: "#8a4020", fillOff: "#241810", accent: "#e07a3d",
+        track: "#3a2a20", error: "#e06050"
+      },
+      {
+        id: "snow",
+        name: "Snow",
+        blurb: "Cool white, blue.",
+        bg: "#e8eef4", ink: "#1a2330", mute: "#5c6b7a",
+        fillOn: "#c5d8f0", fillOff: "#f4f6f8", accent: "#2563eb",
+        track: "#c8d4e0", error: "#b42318"
+      },
+      {
+        id: "paper",
+        name: "Paper",
+        blurb: "Cream, filament.",
+        bg: "#e8e0d4", ink: "#1c1814", mute: "#6e675c",
+        fillOn: "#e8c4a0", fillOff: "#f3eee4", accent: "#c45c26",
+        track: "#d4c8b8", error: "#a33b2a"
+      },
+      {
+        id: "sand",
+        name: "Sand",
+        blurb: "Warm beige, terracotta.",
+        bg: "#e8dcc8", ink: "#2a2118", mute: "#7a6a58",
+        fillOn: "#e0b090", fillOff: "#f4ecdf", accent: "#b85c38",
+        track: "#d4c4a8", error: "#a33b2a"
+      },
+      {
+        id: "linen",
+        name: "Linen",
+        blurb: "Ivory, olive.",
+        bg: "#e6e2d4", ink: "#2a2a1c", mute: "#6e6e58",
+        fillOn: "#c8c4a0", fillOff: "#f2efe4", accent: "#6a7a38",
+        track: "#d0ccb8", error: "#a04030"
+      },
+      {
+        id: "meadow",
+        name: "Meadow",
+        blurb: "Sage, leaf.",
+        bg: "#dce8d8", ink: "#1c2a1c", mute: "#5a7058",
+        fillOn: "#a8c898", fillOff: "#e8f0e4", accent: "#3d8a4a",
+        track: "#c0d4bc", error: "#b04030"
+      },
+      {
+        id: "sky",
+        name: "Sky",
+        blurb: "Pale blue, azure.",
+        bg: "#d4e4f0", ink: "#183040", mute: "#5a7088",
+        fillOn: "#a0c8e8", fillOff: "#e8f2f8", accent: "#2a8ad4",
+        track: "#b8d0e0", error: "#c04040"
+      },
+      {
+        id: "porcelain",
+        name: "Porcelain",
+        blurb: "Blush, rose.",
+        bg: "#f0e4e4", ink: "#3a2028", mute: "#8a6870",
+        fillOn: "#e8b8c0", fillOff: "#f8eeee", accent: "#c45a70",
+        track: "#e0c8cc", error: "#b03030"
+      }
+    ];
+
+    const KEY = "round-theme-kept";
+    const grid = document.getElementById("grid");
+    const kept = new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
+    const lit = new Map(THEMES.map((t) => [t.id, true]));
+
+    function save() {
+      localStorage.setItem(KEY, JSON.stringify([...kept]));
+      document.getElementById("keepCount").textContent =
+        kept.size + " kept" + (kept.size ? ": " + [...kept].join(", ") : "");
+    }
+
+    function paint(card, t) {
+      const on = lit.get(t.id);
+      const d = card.querySelector(".dial");
+      d.style.setProperty("--t-bg", t.bg);
+      d.style.setProperty("--t-ink", on ? t.ink : t.mute);
+      d.style.setProperty("--t-mute", t.mute);
+      d.style.setProperty("--t-fill", on ? t.fillOn : t.fillOff);
+      d.style.setProperty("--t-accent", on ? t.accent : t.track);
+      d.style.setProperty("--t-track", t.track);
+      d.style.setProperty("--t-ring", on ? t.accent : t.track);
+      d.querySelector(".level").style.opacity = on ? "1" : "0.35";
+      d.querySelector(".scene").style.visibility = on ? "visible" : "hidden";
+      card.querySelector("[data-lit]").textContent = on ? "On" : "Off";
+      card.classList.toggle("kept", kept.has(t.id));
+      card.querySelector("[data-keep]").classList.toggle("kept-btn", kept.has(t.id));
+      card.querySelector("[data-keep]").textContent = kept.has(t.id) ? "Kept" : "Keep";
+    }
+
+    function swatches(t) {
+      return [t.bg, t.fillOn, t.accent, t.fillOff, t.ink]
+        .map((c) => `<b style="background:${c}" title="${c}"></b>`)
+        .join("");
+    }
+
+    for (const t of THEMES) {
+      const card = document.createElement("article");
+      card.className = "card";
+      card.dataset.id = t.id;
+      card.innerHTML = `
+        <div class="dial" aria-hidden="true">
+          <div class="bg"></div>
+          <div class="track"></div>
+          <div class="level"></div>
+          <div class="btn"></div>
+          <div class="copy">
+            <div class="name">Living</div>
+            <div class="scene">Relax</div>
+          </div>
+          <div class="dots"><i class="on"></i><i></i><i></i></div>
+        </div>
+        <div class="meta">
+          <h2>${t.name}</h2>
+          <div class="id">${t.id}</div>
+          <p>${t.blurb}</p>
+          <div class="swatches">${swatches(t)}</div>
+        </div>
+        <div class="row">
+          <button type="button" data-lit>On</button>
+          <button type="button" data-keep>Keep</button>
+        </div>`;
+      card.querySelector("[data-lit]").addEventListener("click", () => {
+        lit.set(t.id, !lit.get(t.id));
+        paint(card, t);
+      });
+      card.querySelector("[data-keep]").addEventListener("click", () => {
+        if (kept.has(t.id)) kept.delete(t.id);
+        else kept.add(t.id);
+        save();
+        paint(card, t);
+      });
+      grid.appendChild(card);
+      paint(card, t);
+    }
+
+    document.getElementById("allOn").onclick = () => {
+      THEMES.forEach((t) => lit.set(t.id, true));
+      [...grid.children].forEach((c, i) => paint(c, THEMES[i]));
+    };
+    document.getElementById("allOff").onclick = () => {
+      THEMES.forEach((t) => lit.set(t.id, false));
+      [...grid.children].forEach((c, i) => paint(c, THEMES[i]));
+    };
+    document.getElementById("clearKeep").onclick = () => {
+      kept.clear();
+      save();
+      [...grid.children].forEach((c, i) => paint(c, THEMES[i]));
+    };
+    document.getElementById("exportKeep").onclick = async () => {
+      const text = [...kept].join("\n") || "(none)";
+      try {
+        await navigator.clipboard.writeText(text);
+        document.getElementById("exportKeep").textContent = "Copied";
+        setTimeout(() => {
+          document.getElementById("exportKeep").textContent = "Copy kept ids";
+        }, 1200);
+      } catch {
+        prompt("Kept ids", text);
+      }
+    };
+    save();
+  </script>
+</body>
+</html>
