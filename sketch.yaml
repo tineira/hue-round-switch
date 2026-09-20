@@ -1,0 +1,10 @@
+profiles:
+  xiao-s3:
+    fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,USBMode=hwcdc,CDCOnBoot=default,FlashSize=8M,PartitionScheme=default_8MB,FlashMode=qio
+    platforms:
+      # El índice oficial de Arduino no lista esp32; sin esta URL el perfil no resuelve 3.3.12.
+      - platform: esp32:esp32 (3.3.12)
+        platform_index_url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    libraries:
+      - GFX Library for Arduino (1.6.8)
+default_profile: xiao-s3
