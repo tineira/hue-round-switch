@@ -16,6 +16,8 @@ Copia canónica también en `hue-switch-console/docs/round-pages.md`. Mantener a
 
 La consola **nunca** llama al Bridge. El Bridge **nunca** ve Vercel. El dedo en el círculo **nunca** espera a la web. Eso no cambia.
 
+Alta del aparato (flash + Wi‑Fi + token desde Chrome, Round y simple): `hue-switch-console/docs/web-setup.md`. Fuera de páginas; no implementado.
+
 ---
 
 ## 1. Veredicto
