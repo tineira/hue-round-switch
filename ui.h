@@ -664,6 +664,29 @@ inline void uiHueJobPoll() {
     }
     return;
   }
+  if (r.kind == HUE_JOB_RECIPE) {
+    if (!r.ok) {
+      if (gUi == UI_READY || gUi == UI_EMPTY) {
+        gUiPressed = false;
+        uiSet(UI_ERROR);
+        uiPaint();
+      }
+      return;
+    }
+    if (r.haveBri && uiHasDim() && !gDimDragging) {
+      const int pct = uiClampPct(r.pct);
+      gBriPct = pct;
+      gBriKnown = true;
+      gBriLocal = false;
+      gBriLastSent = pct;
+      if (r.haveOn) {
+        gLightOn = r.on;
+        gLightOnKnown = true;
+      }
+      uiSyncFace();
+    }
+    return;
+  }
   if (!r.ok && (gUi == UI_READY || gUi == UI_EMPTY)) {
     gUiPressed = false;
     uiSet(UI_ERROR);

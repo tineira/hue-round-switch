@@ -314,9 +314,90 @@ inline bool hueJobRunDim(const HueJob &job) {
   return ok;
 }
 
-inline bool hueJobRunRecipe(const HueJob &job) {
+inline bool hueJobStale(uint32_t gen) {
+  portENTER_CRITICAL(&gHueJobMux);
+  const bool stale = gen != gHueJobGen || gHuePendingSet;
+  portEXIT_CRITICAL(&gHueJobMux);
+  return stale;
+}
+
+inline int hueJobClampPct(int pct) {
+  if (pct < 1) {
+    return 1;
+  }
+  if (pct > 100) {
+    return 100;
+  }
+  return pct;
+}
+
+// Brillo del destino de aro (grupo o luces), para pintar el anillo tras una escena.
+inline void hueJobReadPageDim(const HueJob &job, HueJobResult *out) {
+  if (!out) {
+    return;
+  }
+  if (job.dimMode == PAGE_DIM_GROUP && job.dimGroupRid[0]) {
+    bool on = false;
+    int pct = 50;
+    if (hueGetLightState("grouped_light", job.dimGroupRid, &on, &pct)) {
+      out->haveOn = true;
+      out->on = on;
+      out->haveBri = true;
+      out->pct = hueJobClampPct(pct);
+    }
+    return;
+  }
+  if (job.dimMode != PAGE_DIM_LIGHTS || job.dimLightCount == 0) {
+    return;
+  }
+  bool anyOn = false;
+  bool got = false;
+  int firstOnPct = 50;
+  int fallbackPct = 50;
+  for (uint8_t i = 0; i < job.dimLightCount && i < kMaxDimLights; i++) {
+    if (!job.dimLights[i][0]) {
+      continue;
+    }
+    bool lightOn = false;
+    int bri = 0;
+    if (!hueGetLightState("light", job.dimLights[i], &lightOn, &bri)) {
+      continue;
+    }
+    got = true;
+    if (!anyOn) {
+      fallbackPct = bri;
+    }
+    if (lightOn && !anyOn) {
+      anyOn = true;
+      firstOnPct = bri;
+    }
+  }
+  if (!got) {
+    return;
+  }
+  out->haveOn = true;
+  out->on = anyOn;
+  out->haveBri = true;
+  out->pct = hueJobClampPct(anyOn ? firstOnPct : fallbackPct);
+}
+
+inline bool hueJobRunRecipe(const HueJob &job, HueJobResult *out) {
   if (strcmp(job.action, "recall_scene") == 0) {
-    return hueRecallScene(job.rid);
+    if (!hueRecallScene(job.rid)) {
+      return false;
+    }
+    if (out) {
+      out->ok = true;
+    }
+    if (hueJobStale(job.gen)) {
+      return true;
+    }
+    delay(400);
+    if (hueJobStale(job.gen) || !out) {
+      return true;
+    }
+    hueJobReadPageDim(job, out);
+    return true;
   }
   if (job.haveTargetOn) {
     return hueSetOn(job.rtype, job.rid, job.targetOn);
@@ -468,7 +549,7 @@ inline bool hueJobRun(const HueJob &job, HueJobResult *out) {
     return r.ok;
   }
   if (job.kind == HUE_JOB_RECIPE) {
-    r.ok = hueJobRunRecipe(job);
+    r.ok = hueJobRunRecipe(job, &r);
     *out = r;
     return r.ok;
   }
