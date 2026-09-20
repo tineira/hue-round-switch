@@ -23,14 +23,17 @@ inline constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// D6 = GPIO43 = U0TXD. Si UART deja el pin en idle HIGH, R18 (pull-up del Round)
-// mantiene el backlight encendido. Hay que resetear la matriz y forzar nivel.
+// D6 = GPIO43 = U0TXD. Pull-up R18 en el Round: si el pad flota, el BL queda ON.
+// analogWrite (LEDC) + hold para que UART no lo vuelva a HIGH.
 inline void displayBl(bool on) {
   const gpio_num_t pin = static_cast<gpio_num_t>(kPinLcdBl);
   gpio_hold_dis(pin);
-  gpio_reset_pin(pin);
-  gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-  gpio_set_level(pin, on ? 1 : 0);
+  pinMode(kPinLcdBl, OUTPUT);
+  gpio_set_drive_capability(pin, GPIO_DRIVE_CAP_3);
+  analogWrite(kPinLcdBl, on ? 255 : 0);
+  if (!on) {
+    gpio_hold_en(pin);
+  }
 }
 
 inline bool displayBegin() {
@@ -53,6 +56,7 @@ inline bool displayBegin() {
 }
 
 inline void displayIdlePanel() {
+  displayBl(false);
   if (gDisplayOk && gLcd) {
     gLcd->fillScreen(RGB565_BLACK);
     gLcd->displayOff();

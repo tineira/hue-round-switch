@@ -842,6 +842,7 @@ inline void uiTick(unsigned long now) {
   }
   if (gUi != gUiPainted) {
     if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+      displayBl(false);
       return;
     }
     if (gUi == UI_READY) {
@@ -851,6 +852,7 @@ inline void uiTick(unsigned long now) {
     return;
   }
   if (gScreenIdle) {
+    displayBl(false);
     return;
   }
   if (uiNeedsPulse(gUi) && (now - gUiPulseMs) >= 180) {
