@@ -72,6 +72,8 @@ inline UiScreen uiFromRecipes() { return gPageCount > 0 ? UI_READY : UI_EMPTY; }
 
 inline bool uiPageHasDouble() { return recipesFind(pagesActiveId(), "double_click") != nullptr; }
 
+inline bool uiHasDim() { return pagesHasDim(); }
+
 inline bool uiLightLit() { return !gLightOnKnown || gLightOn; }
 
 inline const PageTheme *uiTheme() {
@@ -164,7 +166,7 @@ inline float uiLevelAngle(int pct) {
 }
 
 inline void uiDrawLevel() {
-  if (!gDisplayOk || !gLcd || gUi != UI_READY || !pagesHasDim()) {
+  if (!gDisplayOk || !gLcd || gUi != UI_READY || !uiHasDim()) {
     return;
   }
   const PageTheme *t = uiTheme();
@@ -237,7 +239,7 @@ inline void uiDrawRings(unsigned long now) {
   }
   const PageTheme *t = uiTheme();
   const uint16_t ring = uiRingColor(gUi, now);
-  if (!(gUi == UI_READY && pagesHasDim())) {
+  if (!(gUi == UI_READY && uiHasDim())) {
     gLcd->drawCircle(kScreenCx, kScreenCy, kRingOuter, ring);
   }
   gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius, ring);
@@ -386,12 +388,17 @@ inline void uiPaint() {
 inline bool uiNeedsPulse(UiScreen s) { return s == UI_PAIRING || s == UI_LOADING; }
 
 inline bool uiRefreshState(bool force) {
+  const Page *p = pagesActive();
   const char *rtype = nullptr;
   const char *rid = nullptr;
-  const PageDimTarget *dim = pagesDimTarget();
-  if (dim) {
-    rtype = dim->rtype;
-    rid = dim->rid;
+  const bool dimRing = uiHasDim();
+  const bool lightsDim = p && p->dimMode == PAGE_DIM_LIGHTS && p->dimLightCount > 0;
+
+  if (p && p->dimMode == PAGE_DIM_GROUP && p->dimGroupRid[0]) {
+    rtype = "grouped_light";
+    rid = p->dimGroupRid;
+  } else if (lightsDim) {
+    rid = p->dimLights[0];
   } else {
     const HueRecipe *r = recipesFind(pagesActiveId(), "short");
     if (r && r->rid[0] && (strcmp(r->rtype, "light") == 0 || strcmp(r->rtype, "grouped_light") == 0)) {
@@ -399,7 +406,7 @@ inline bool uiRefreshState(bool force) {
       rid = r->rid;
     }
   }
-  if (!rtype || !rid || !rid[0]) {
+  if (!rid || !rid[0]) {
     gLightOnKnown = false;
     gBriKnown = false;
     gBriRid[0] = 0;
@@ -408,17 +415,54 @@ inline bool uiRefreshState(bool force) {
   if (!force && gBriLocal && gLightOnKnown && gBriRid[0] && strcmp(gBriRid, rid) == 0) {
     return false;
   }
+
   bool on = gLightOn;
   int pct = gBriPct;
-  if (!hueGetLightState(rtype, rid, &on, pagesHasDim() ? &pct : nullptr)) {
-    return false;
+  if (lightsDim) {
+    bool got = false;
+    bool anyOn = false;
+    int firstOnPct = 0;
+    int fallbackPct = pct;
+    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
+      if (!p->dimLights[i][0]) {
+        continue;
+      }
+      bool lightOn = false;
+      int bri = 0;
+      if (!hueGetLightState("light", p->dimLights[i], &lightOn, dimRing ? &bri : nullptr)) {
+        continue;
+      }
+      got = true;
+      if (!anyOn) {
+        fallbackPct = bri;
+      }
+      if (lightOn && !anyOn) {
+        anyOn = true;
+        firstOnPct = bri;
+      }
+    }
+    if (!got) {
+      return false;
+    }
+    on = anyOn;
+    pct = anyOn ? firstOnPct : fallbackPct;
+  } else {
+    if (!rtype) {
+      gLightOnKnown = false;
+      gBriKnown = false;
+      gBriRid[0] = 0;
+      return false;
+    }
+    if (!hueGetLightState(rtype, rid, &on, dimRing ? &pct : nullptr)) {
+      return false;
+    }
   }
   recipeCopyField(gBriRid, sizeof(gBriRid), rid);
   const bool onChanged = !gLightOnKnown || on != gLightOn;
-  const bool briChanged = pagesHasDim() && (!gBriKnown || uiClampPct(pct) != gBriPct);
+  const bool briChanged = dimRing && (!gBriKnown || uiClampPct(pct) != gBriPct);
   gLightOn = on;
   gLightOnKnown = true;
-  if (pagesHasDim()) {
+  if (dimRing) {
     gBriPct = uiClampPct(pct);
     gBriKnown = true;
   }
@@ -472,7 +516,7 @@ inline void uiSyncFace() {
     return;
   }
   uiDrawReadyFace();
-  if (pagesHasDim()) {
+  if (uiHasDim()) {
     gBriShown = -1;
     uiDrawLevel();
   }
@@ -580,15 +624,58 @@ inline void uiTick(unsigned long now) {
 }
 
 inline bool uiDimPut(int pct) {
-  const PageDimTarget *d = pagesDimTarget();
-  if (!d || WiFi.status() != WL_CONNECTED) {
+  const Page *p = pagesActive();
+  if (!p || !uiHasDim() || WiFi.status() != WL_CONNECTED) {
     return false;
   }
   pct = uiClampPct(pct);
   if (pct == gBriLastSent) {
     return true;
   }
-  if (!hueSetBrightness(d->rtype, d->rid, pct)) {
+
+  bool ok = false;
+  if (p->dimMode == PAGE_DIM_GROUP && p->dimGroupRid[0]) {
+    // Un PUT dimming al grouped_light; si el grupo está off, el Bridge prende.
+    ok = huePutDimming("grouped_light", p->dimGroupRid, pct, false);
+  } else if (p->dimMode == PAGE_DIM_LIGHTS && p->dimLightCount > 0) {
+    bool on[kMaxDimLights];
+    bool got[kMaxDimLights];
+    bool anyOn = false;
+    for (uint8_t i = 0; i < kMaxDimLights; i++) {
+      on[i] = false;
+      got[i] = false;
+    }
+    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
+      if (!p->dimLights[i][0]) {
+        continue;
+      }
+      bool lightOn = false;
+      if (!hueGetLightState("light", p->dimLights[i], &lightOn, nullptr)) {
+        continue;
+      }
+      got[i] = true;
+      on[i] = lightOn;
+      if (lightOn) {
+        anyOn = true;
+      }
+    }
+    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
+      if (!p->dimLights[i][0]) {
+        continue;
+      }
+      if (anyOn) {
+        if (!got[i] || !on[i]) {
+          continue;
+        }
+        if (huePutDimming("light", p->dimLights[i], pct, false)) {
+          ok = true;
+        }
+      } else if (huePutDimming("light", p->dimLights[i], pct, true)) {
+        ok = true;
+      }
+    }
+  }
+  if (!ok) {
     return false;
   }
   gBriLastSent = pct;
@@ -692,7 +779,7 @@ inline void uiTouchEnd(unsigned long now) {
 
   if (gUi == UI_READY || gUi == UI_EMPTY) {
     uiDrawReadyFace();
-    if (pagesHasDim()) {
+    if (uiHasDim()) {
       uiDrawLevel();
     }
   }
@@ -727,7 +814,7 @@ inline void uiPollTouch(unsigned long now) {
     if (gUi != UI_READY && gUi != UI_EMPTY) {
       return;
     }
-    if (gTapWaitDouble && inRing && pagesHasDim()) {
+    if (gTapWaitDouble && inRing && uiHasDim()) {
       gTapWaitDouble = false;
       uiFireEvent("short");
     }
@@ -738,7 +825,7 @@ inline void uiPollTouch(unsigned long now) {
     gTouchStartX = x;
     gTouchStartY = y;
     gSwipeDone = false;
-    if (inRing && pagesHasDim()) {
+    if (inRing && uiHasDim()) {
       gTouchMode = TOUCH_RING;
       gDimDragging = true;
       gDimHavePct = false;

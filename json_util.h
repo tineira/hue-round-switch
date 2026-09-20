@@ -95,6 +95,27 @@ inline bool jsonHasKey(const char *json, const char *key) {
   return strstr(json, needle) != nullptr;
 }
 
+// Puntero al '{' del objeto, o nullptr si falta / es null.
+inline const char *jsonObjectPtr(const char *json, const char *objKey) {
+  if (!json || !objKey) {
+    return nullptr;
+  }
+  char needle[48];
+  snprintf(needle, sizeof(needle), "\"%s\":", objKey);
+  const char *p = strstr(json, needle);
+  if (!p) {
+    return nullptr;
+  }
+  p += strlen(needle);
+  while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
+    p++;
+  }
+  if (*p != '{') {
+    return nullptr;
+  }
+  return p;
+}
+
 inline int jsonGetInt(const char *json, const char *key, int defVal) {
   if (!json || !key) {
     return defVal;
@@ -331,6 +352,72 @@ inline bool jsonFindRidByRtype(const char *json, const char *rtype, char *out, s
 }
 
 typedef void (*JsonObjFn)(const char *obj, void *ctx);
+typedef void (*JsonStrFn)(const char *s, void *ctx);
+
+// Recorre "key":["a","b"] (strings, no objetos).
+inline void jsonEachArrayString(const char *json, const char *key, JsonStrFn fn, void *ctx) {
+  if (!json || !key || !fn) {
+    return;
+  }
+  char needle[48];
+  snprintf(needle, sizeof(needle), "\"%s\":", key);
+  const char *p = strstr(json, needle);
+  if (!p) {
+    return;
+  }
+  p = strchr(p, '[');
+  if (!p) {
+    return;
+  }
+  p++;
+  bool inString = false;
+  bool escape = false;
+  int depth = 0;
+  char buf[40];
+  size_t n = 0;
+  for (; *p; p++) {
+    const char c = *p;
+    if (!inString && depth == 0 && c == ']') {
+      return;
+    }
+    if (escape) {
+      if (inString && n + 1 < sizeof(buf)) {
+        buf[n++] = c;
+      }
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (c == '\\') {
+        escape = true;
+        continue;
+      }
+      if (c == '"') {
+        inString = false;
+        buf[n] = 0;
+        if (depth == 0) {
+          fn(buf, ctx);
+        }
+        n = 0;
+        continue;
+      }
+      if (n + 1 < sizeof(buf)) {
+        buf[n++] = c;
+      }
+      continue;
+    }
+    if (c == '"') {
+      inString = true;
+      n = 0;
+      continue;
+    }
+    if (c == '{') {
+      depth++;
+    } else if (c == '}' && depth > 0) {
+      depth--;
+    }
+  }
+}
 
 inline void jsonEachArrayObject(const char *json, const char *key, JsonObjFn fn, void *ctx) {
   if (!json || !key || !fn) {

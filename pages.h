@@ -12,16 +12,25 @@ static const uint8_t kSceneNameMax = 24;
 
 enum PageSwipeAxis { PAGE_SWIPE_HORIZONTAL = 0, PAGE_SWIPE_VERTICAL = 1 };
 
-struct PageDimTarget {
+enum PageDimMode { PAGE_DIM_NONE = 0, PAGE_DIM_GROUP = 1, PAGE_DIM_LIGHTS = 2 };
+
+static const uint8_t kMaxDimLights = 2;
+
+struct PageGroup {
   char rtype[16];
   char rid[40];
+  char groupedLightRid[40];
 };
 
 struct Page {
   char id[16];
   char name[13];
   char theme[16];
-  PageDimTarget dim;
+  PageGroup group;
+  PageDimMode dimMode;
+  char dimGroupRid[40];
+  uint8_t dimLightCount;
+  char dimLights[kMaxDimLights][40];
 };
 
 struct PageTheme {
@@ -145,6 +154,10 @@ inline bool pageRtypeDimOk(const char *r) {
   return r && (strcmp(r, "light") == 0 || strcmp(r, "grouped_light") == 0);
 }
 
+inline bool pageGroupRtypeOk(const char *r) {
+  return r && (strcmp(r, "room") == 0 || strcmp(r, "zone") == 0);
+}
+
 inline void pagesClearLastScenes() {
   memset(gLastSceneRid, 0, sizeof(gLastSceneRid));
 }
@@ -193,15 +206,16 @@ inline bool pagesHasId(const char *id) {
 
 inline bool pagesHasDim() {
   const Page *p = pagesActive();
-  return p && p->dim.rid[0] && pageRtypeDimOk(p->dim.rtype);
-}
-
-inline const PageDimTarget *pagesDimTarget() {
-  const Page *p = pagesActive();
-  if (!p || !p->dim.rid[0] || !pageRtypeDimOk(p->dim.rtype)) {
-    return nullptr;
+  if (!p) {
+    return false;
   }
-  return &p->dim;
+  if (p->dimMode == PAGE_DIM_GROUP) {
+    return p->dimGroupRid[0] != 0;
+  }
+  if (p->dimMode == PAGE_DIM_LIGHTS) {
+    return p->dimLightCount > 0 && p->dimLights[0][0] != 0;
+  }
+  return false;
 }
 
 inline const char *pagesLastSceneRid() {
@@ -245,17 +259,92 @@ inline String pagesToJson() {
     jsonAppendEscaped(s, gPages[i].name);
     s += ",\"theme\":";
     jsonAppendEscaped(s, gPages[i].theme);
-    if (gPages[i].dim.rid[0] && pageRtypeDimOk(gPages[i].dim.rtype)) {
-      s += ",\"dimTarget\":{\"rtype\":";
-      jsonAppendEscaped(s, gPages[i].dim.rtype);
+    if (gPages[i].group.rid[0] || gPages[i].group.groupedLightRid[0]) {
+      s += ",\"group\":{\"rtype\":";
+      jsonAppendEscaped(s, gPages[i].group.rtype[0] ? gPages[i].group.rtype : "room");
       s += ",\"rid\":";
-      jsonAppendEscaped(s, gPages[i].dim.rid);
-      s += "}";
+      jsonAppendEscaped(s, gPages[i].group.rid);
+      s += ",\"groupedLightRid\":";
+      jsonAppendEscaped(s, gPages[i].group.groupedLightRid);
+      s += '}';
+    }
+    if (gPages[i].dimMode == PAGE_DIM_GROUP && gPages[i].dimGroupRid[0]) {
+      s += ",\"dim\":{\"mode\":\"group\",\"rid\":";
+      jsonAppendEscaped(s, gPages[i].dimGroupRid);
+      s += '}';
+    } else if (gPages[i].dimMode == PAGE_DIM_LIGHTS && gPages[i].dimLightCount > 0) {
+      s += ",\"dim\":{\"mode\":\"lights\",\"rids\":[";
+      for (uint8_t j = 0; j < gPages[i].dimLightCount; j++) {
+        if (j) {
+          s += ',';
+        }
+        jsonAppendEscaped(s, gPages[i].dimLights[j]);
+      }
+      s += "]}";
     }
     s += '}';
   }
   s += "]";
   return s;
+}
+
+inline void pageParseDimRid(const char *s, void *ctx) {
+  Page *out = static_cast<Page *>(ctx);
+  if (!out || !s || !s[0] || out->dimLightCount >= kMaxDimLights) {
+    return;
+  }
+  for (uint8_t i = 0; i < out->dimLightCount; i++) {
+    if (strcmp(out->dimLights[i], s) == 0) {
+      return;
+    }
+  }
+  pageCopyField(out->dimLights[out->dimLightCount], sizeof(out->dimLights[0]), s);
+  out->dimLightCount++;
+}
+
+inline void pageParseDim(const char *obj, Page *out) {
+  if (!obj || !out) {
+    return;
+  }
+  const char *dimObj = jsonObjectPtr(obj, "dim");
+  if (jsonHasKey(obj, "dim")) {
+    // dim presente (null u objeto): manda. Unknown/null → sin aro.
+    if (!dimObj) {
+      return;
+    }
+    char mode[16];
+    mode[0] = 0;
+    jsonGetString(dimObj, "mode", mode, sizeof(mode));
+    if (strcmp(mode, "group") == 0) {
+      char rid[40];
+      rid[0] = 0;
+      jsonGetString(dimObj, "rid", rid, sizeof(rid));
+      if (rid[0]) {
+        out->dimMode = PAGE_DIM_GROUP;
+        pageCopyField(out->dimGroupRid, sizeof(out->dimGroupRid), rid);
+      }
+      return;
+    }
+    if (strcmp(mode, "lights") == 0) {
+      jsonEachArrayString(dimObj, "rids", pageParseDimRid, out);
+      if (out->dimLightCount > 0) {
+        out->dimMode = PAGE_DIM_LIGHTS;
+      }
+      return;
+    }
+    return;
+  }
+  // Compat NVS viejo: dimTarget de un rid → group hasta el próximo poll.
+  char rtype[16];
+  char rid[40];
+  rtype[0] = 0;
+  rid[0] = 0;
+  jsonGetObjectString(obj, "dimTarget", "rtype", rtype, sizeof(rtype));
+  jsonGetObjectString(obj, "dimTarget", "rid", rid, sizeof(rid));
+  if (rid[0] && pageRtypeDimOk(rtype)) {
+    out->dimMode = PAGE_DIM_GROUP;
+    pageCopyField(out->dimGroupRid, sizeof(out->dimGroupRid), rid);
+  }
 }
 
 inline bool pageFromObject(const char *obj, Page *out) {
@@ -276,16 +365,21 @@ inline bool pageFromObject(const char *obj, Page *out) {
   theme[0] = 0;
   jsonGetString(obj, "theme", theme, sizeof(theme));
   pageCopyField(out->theme, sizeof(out->theme), theme[0] ? theme : "ember");
-  char rtype[16];
-  char rid[40];
-  rtype[0] = 0;
-  rid[0] = 0;
-  jsonGetObjectString(obj, "dimTarget", "rtype", rtype, sizeof(rtype));
-  jsonGetObjectString(obj, "dimTarget", "rid", rid, sizeof(rid));
-  if (rid[0] && pageRtypeDimOk(rtype)) {
-    pageCopyField(out->dim.rtype, sizeof(out->dim.rtype), rtype);
-    pageCopyField(out->dim.rid, sizeof(out->dim.rid), rid);
+  char gtype[16];
+  char grid[40];
+  char glrid[40];
+  gtype[0] = 0;
+  grid[0] = 0;
+  glrid[0] = 0;
+  jsonGetObjectString(obj, "group", "rtype", gtype, sizeof(gtype));
+  jsonGetObjectString(obj, "group", "rid", grid, sizeof(grid));
+  jsonGetObjectString(obj, "group", "groupedLightRid", glrid, sizeof(glrid));
+  if (pageGroupRtypeOk(gtype)) {
+    pageCopyField(out->group.rtype, sizeof(out->group.rtype), gtype);
   }
+  pageCopyField(out->group.rid, sizeof(out->group.rid), grid);
+  pageCopyField(out->group.groupedLightRid, sizeof(out->group.groupedLightRid), glrid);
+  pageParseDim(obj, out);
   return true;
 }
 

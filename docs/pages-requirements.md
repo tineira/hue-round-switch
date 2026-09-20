@@ -4,14 +4,14 @@ Documento de **requisitos de producto**. Cubre `hue-round-switch` (firmware, cí
 
 Copia canónica también en `hue-switch-console/docs/round-pages.md`. Mantener ambos alineados.
 
-**Estado:** requisitos, no implementado. No hay código de páginas hasta que se apruebe este documento.
+**Estado:** requisitos vigentes. Páginas v1 ya están en consola y firmware. Esta revisión ancla cada página a un **grupo** y redefine el aro (§8.2); **eso aún no está en código**.
 
 **Productos:**
 
 | Repo | Rol en esta feature |
 | --- | --- |
 | `hue-round-switch` | Círculo 240×240. Una página activa a la vez. Gestos de centro + aro de brillo. Swipe cambia de página. |
-| `hue-switch-console` | CRUD de páginas, recetas por gesto (listas de escenas ordenables), eje de swipe, theme, nombre. Baja todo en el poll de config. |
+| `hue-switch-console` | CRUD de páginas (grupo room/zona, recetas, listas de escenas, eje, theme, nombre). Baja `group` + destinos de dimmer en el poll. |
 | `hue-simple-switch` | **Fuera de alcance.** Sigue siendo GPIO + canales. La UI de la consola se ramifica por producto. |
 
 La consola **nunca** llama al Bridge. El Bridge **nunca** ve Vercel. El dedo en el círculo **nunca** espera a la web. Eso no cambia.
@@ -38,24 +38,36 @@ El usuario está de pie, a un brazo, tocando un círculo de 39 mm. La UI tiene q
 
 ## 3. Idea
 
-Una **página** es la configuración activa del display: nombre en pantalla, theme de color y recetas de tap / doble (cada una opcional). El aro sigue siendo dimmer del `dimTarget` de esa página.
+Una **página** está anclada a **un grupo Hue** (`room` o `zone`). Nombre, theme, tap y doble viven ahí. Luces y escenas de las recetas **solo** salen de ese grupo. El aro dimmea según §8.2 (el grupo, o solo las luces de las acciones).
 
 Varias páginas viven en el mismo aparato. El swipe (eje elegido **por display** en la consola) pasa de una a otra. No es una receta Hue: es navegación local.
 
 ```text
-Página 1 "Living"                    Página 2 "Patio"
- tap → cycle Relax, Bright, Night    tap → toggle group
- double → off Living                 double → off Patio
- aro → dim Living                    aro → dim Patio
+Página 1 "Living" (room Living)
+ tap → cycle Relax, Bright, Night
+ double → off Living
+ aro → dim Living (grupo; solo luces on)
+
+Página 2 "Patio" (room Patio)
+ tap → toggle Patio
+ double → off Patio
+ aro → dim Patio (grupo)
+
+Página 3 "Lamps" (room Living)
+ tap → toggle Velador 1
+ double → toggle Velador 2
+ aro → dim solo Velador 1 y 2 (las que estén on)
 ```
 
-Un gesto de escena no apunta a un `rid` suelto: apunta a una **lista ordenada** de escenas del mismo room o zona. Cada uso de ese gesto aplica la siguiente. Off no es una escena: es `off` del `grouped_light` de ese grupo, en **doble tap**.
+Un gesto de escena es una **lista ordenada** de escenas **de ese grupo**. Off no es una escena: es `off` del `grouped_light` del grupo, en **doble tap**.
 
 ---
 
 ## 4. Conceptos
 
-**Página.** Configuración activa. No es un canal GPIO. La consola las crea, nombra, ordena, colorea y borra. El firmware **no** declara cuántas hay: las recibe en el poll.
+**Página.** Configuración activa, **siempre** de un `room` o `zone`. No es un canal GPIO. La consola las crea, nombra, ancla al grupo, ordena, colorea y borra. El firmware **no** declara cuántas hay: las recibe en el poll.
+
+**Grupo de la página.** `room` o `zone` del snapshot + su `grouped_light`. Filtra la topología: luces hijas y escenas de ese group. No se mezclan Living y Patio. Una bombilla suelta no es un grupo (no hay página “sin room”).
 
 **Página activa.** La que se ve y la que recibe gestos. Una sola. El swipe la cambia. Se recuerda en NVS (reboot vuelve a la última).
 
@@ -63,9 +75,9 @@ Un gesto de escena no apunta a un `rid` suelto: apunta a una **lista ordenada** 
 
 **Gesto de centro.** Ocurre en el disco interior (radio ≤ 88). Eventos de receta: `short` (tap) y `double_click` (doble tap). En la consola **los dos huecos siempre están**; el usuario asigna receta o los deja vacíos. Vacío = no-op. Si doble no tiene receta, el tap no espera la ventana del segundo toque. **No hay hold** en pantalla.
 
-**Aro / dimmer.** Disco exterior (radio ~96–118). No es receta. Drag + PUT de brillo al soltar, igual que hoy. Destino dimmable: un `light` / `grouped_light`, o el grupo padre de una lista de escenas.
+**Aro / dimmer.** Disco exterior (radio ~96–118). No es receta. Drag + PUT de brillo al soltar. Destino: el **grupo** o **las luces de las acciones**, según §8.2. Como la app Hue: solo luces que están **on**; si todas las del destino están off, el drag las **prende** a ese %.
 
-**Lista de escenas.** Receta `recall_scene` con 1–8 escenas del **mismo** room o zona, en el orden que el usuario fija en la consola. Un ítem = el recall de hoy. Varios = rotar. El Bridge no rota: cada toque es un PUT a un `rid`; el aparato elige el siguiente.
+**Lista de escenas.** Receta `recall_scene` con 1–8 escenas del **grupo de la página**, en el orden que el usuario fija en la consola. Un ítem = el recall de hoy. Varios = rotar. El Bridge no rota: cada toque es un PUT a un `rid`; el aparato elige el siguiente.
 
 **Swipe de página.** Gesto de navegación, no de Hue. Eje `horizontal` (left/right) o `vertical` (up/down), **por aparato**, no por página. Configurable en consola.
 
@@ -199,9 +211,11 @@ No es receta. No llama al Bridge.
 
 ### 6.4 Aro — dimmer
 
-Igual que hoy en espíritu: posición angular 1–100, PUT al soltar. Destino = **destino de dimmer de la página** (ver §8). Light/group apagado: el aro puede verse apagado (como ahora) y un drag que sube brillo puede prender, según lo que ya haga Clip v2 al PUT de `dimming`.
+Posición angular 1–100, PUT al soltar. Destino = **set de dimmer de la página** (§8.2), no un slot extra.
 
-Si el destino de dimmer sale de una lista de escenas, el aro regula el `grouped_light` de ese room/zona (las escenas prenden el grupo; el aro recorta brillo).
+- Destino **grupo**: un PUT a `grouped_light` (el Bridge, como la app, suele tocar solo las on; si el grupo está off, el drag prende).
+- Destino **luces de las acciones**: GET de esas luces; PUT de `dimming` solo a las `on`. Si ninguna está on, PUT `on` + `dimming` a todas las del set. El % del aro es **absoluto** (todas las on quedan en el mismo 1–100), no un scale relativo.
+- Sin destino → no hay aro.
 
 El swipe de página **no** vive en el aro. El aro no se “configura” como gesto de receta.
 
@@ -236,14 +250,14 @@ Estados de sistema (inglés, una línea): `Wi-Fi...`, `No Wi-Fi`, `No Bridge`, `
 
 Una receta sigue siendo acción Hue + destino(s). La clave deja de ser `(channelId, event)` en el Round y pasa a ser `(pageId, event)`.
 
-| Evento | Default de acción Hue | Destinos típicos |
+| Evento | Default de acción Hue | Destinos (siempre del grupo de la página) |
 | --- | --- | --- |
-| `short` | `toggle` | `light` / `grouped_light`; o lista de escenas (`recall_scene`) |
-| `double_click` | `off` | `light` / `grouped_light` del mismo grupo. **No** una escena. También puede ser otra lista de escenas si se quiere |
+| `short` | `toggle` | `grouped_light` del grupo; o una luz **hija**; o lista de escenas del grupo |
+| `double_click` | `off` | `grouped_light` del grupo (típico); o una luz hija; o otra lista de escenas del grupo |
 
-Vacío = no hace nada. Guardar incompleto es válido (solo tap, sin doble).
+Vacío = no hace nada. Guardar incompleto es válido (solo tap, sin doble). Un destino fuera del grupo lo rechaza la consola.
 
-**Destino de dimmer de la página (aro):** la consola lo calcula al guardar y lo baja en `pages[].dimTarget` (ver §8.2). El usuario no elige un slot “dimmer”. El aro no gasta un evento.
+**Dimmer:** el usuario no elige un slot “aro”. La consola calcula el set al guardar (§8.2).
 
 ### 8.1 Lista de escenas (rotar)
 
@@ -256,7 +270,7 @@ Clip v2 no tiene “siguiente escena”. `recall_scene` en Round es **una lista 
 
 Reglas:
 
-- Todas las escenas de una lista pertenecen al **mismo** `group` (mismo `room` o `zone` del snapshot). La consola no deja mezclar Living + Patio.
+- Todas las escenas de una lista pertenecen al **grupo de la página**. La consola no muestra (ni deja) escenas de otro room/zona.
 - El **orden lo edita el usuario** en la consola (agregar, quitar, drag / flechas). Ese orden es el del ciclo.
 - Off **no** entra en la lista. No existe “scene off” en Clip v2 (`recall.action` es `active` \| `dynamic_palette` \| `static`). Apagar es **doble tap** → `off` del `grouped_light` de ese grupo.
 - Smart scenes (`smart_scene` / `deactivate`) quedan fuera de v1.
@@ -274,28 +288,35 @@ El dedo no espera a Vercel. Sí puede esperar el GET+PUT al Bridge (LAN), igual 
 
 Índice / último `rid` se puede cachear en NVS para ir rápido; la fuente de verdad de “cuál está puesta” es el Bridge, no el índice local (así un cambio en la app Hue no deja el círculo un paso atrás para siempre). Tras el PUT (o al entrar a la página), se pinta el `name` de ese `rid`.
 
-### 8.2 `dimTarget` (aro)
+### 8.2 Set de dimmer (aro)
 
-El firmware **no** adivina el grupo de una escena con GET extra. El poll trae el destino de brillo ya resuelto.
+La consola lo calcula **al guardar** (snapshot). El firmware no infiere el room a partir de una escena.
 
-En cada página:
+En cada página el poll baja `dim`:
 
 ```text
-dimTarget: { rtype: "light" | "grouped_light", rid: "…" } | null
+dim: null
+  | { mode: "group", rid: "<grouped_light>" }
+  | { mode: "lights", rids: ["<light>", "<light>"] }
 ```
 
-`null` / omitido → sin aro.
+`null` → sin aro.
 
-La consola lo recalcula **al guardar** recetas de esa página, con el snapshot:
+Reglas, en este orden:
 
-1. Si `short` apunta a `light` o `grouped_light` → ese `target`.
-2. Si `short` es `recall_scene` → el `grouped_light` del room/zona de esa lista (todas las escenas son del mismo group).
-3. Si no, lo mismo con `double_click` (por si tap está vacío y doble es el dimmable).
-4. Si nada es dimmable → `null`.
+1. **Hay `recall_scene` en tap o doble** → `mode: "group"` (el `grouped_light` de la página). Una escena pinta el cuarto; el aro es el slider de la app Hue.
+2. **No hay escenas, y alguna receta apunta al `grouped_light` del grupo** (p. ej. tap = velador, doble = off Living) → `mode: "group"`.
+3. **No hay escenas ni acción de grupo: solo luces hijas** (p. ej. tap = Velador 1, doble = Velador 2) → `mode: "lights"`, `rids` = esas luces, sin duplicar. El aro **no** toca el plafón ni el resto del room.
+4. Nada dimmable → `null`.
 
-Un light suelto se dimmea a sí mismo, no al room. Un ciclo de escenas de Living dimmea el `grouped_light` de Living. Si el usuario cambia la lista a otro room, el siguiente save reescribe `dimTarget`.
+Comportamiento al soltar el aro (1–100 absoluto):
 
-El aparato solo hace PUT de `dimming` a ese rid. Si el rid ya no existe (404), igual que un target de receta stale.
+| `dim.mode` | PUT |
+| --- | --- |
+| `group` | un PUT `dimming` al `grouped_light`. El Bridge deja off las que ya están off; si el grupo está todo off, el drag **prende**. |
+| `lights` | GET de esos `rid`. PUT `dimming` solo a las `on`. Si **ninguna** está on → PUT `on` + `dimming` a todas las del set. |
+
+Un rid stale (404) se salta, igual que una receta huérfana. Dos luces: como mucho dos PUT a `/light` (cabe en el límite del Bridge).
 
 ---
 
@@ -317,21 +338,16 @@ Al seleccionar un Round Display (no un simple-switch), la columna izquierda **no
 
 Mínimo 1 página (no se puede borrar la última: queda vacía, asignable). Máximo **6**.
 
-Página nueva: nombre `Page 2` (inglés, editable al tiro), theme `ember`, **tap y doble visibles y vacíos**, `dimTarget` null. El usuario asigna lo que quiera (o nada).
+Página nueva: hay que **elegir el grupo** (room/zona). Nombre default = nombre Hue del grupo recortado a 12 / ASCII (editable). Theme `ember`. Tap y doble vacíos. `dim` null hasta que haya recetas.
 
 ### 9.3 Editor de una página
 
+- **Group** — room o zona, obligatorio. Cambiar el grupo **limpia** recetas que ya no pertenezcan (aviso). La columna de topología **solo** muestra luces hijas y escenas de ese group.
 - **Name** — input, máx. 12 caracteres. Es lo que se ve en el círculo.
 - **Theme** — picker visual de **diales redondos**, el mismo lenguaje que `hue-round-switch/docs/round-themes.html` (no el dropdown CSS del sitio). Una paleta por página: click en el círculo la elige (anillo de seleccionado). On/Off en el preview para ver luz prendida vs apagada. El nombre en el dial de muestra puede ser el de la página. El usuario no edita hex.
-- **Slots de receta** — siempre **Tap** y **Double tap**, asignables o vacíos. Elegir el hueco, click en la topología de la derecha. Defaults de acción según §8. Vacío = esa acción no hace nada y, si el vacío es el doble, el tap no espera. No hay checkboxes de “activar gesto”.
-- **Lista de escenas** — si el hueco queda en `recall_scene` (click en una escena, o default de doble tap):
-  - Click en una escena del **mismo** room/zona la **agrega** al final (si aún no está).
-  - Click en una escena que ya está en la lista la **saca**.
-  - Click en una escena de **otro** grupo: no se mezcla; aviso en inglés (*“Scenes must be in the same room or zone.”*).
-  - Bajo el slot, la lista se **reordena** (drag o flechas). Ese orden es el del ciclo en el círculo.
-  - Mínimo 1 escena para que la receta exista; máximo **8**.
-  - Off no se ofrece como ítem de la lista. Para apagar: doble tap → el room/zona (`grouped_light`).
-- Frase de confirmación en inglés, p. ej. *“Living · tap → cycle Relax, Bright, Night · double-tap → turn off Living · ring dims Living”*.
+- **Slots de receta** — siempre **Tap** y **Double tap**, asignables o vacíos. Click en la topología filtrada. Defaults según §8. Vacío = no-op; si doble está vacío, el tap no espera.
+- **Lista de escenas** — click en una escena del grupo la agrega; click de nuevo la saca; reordenar. Máx. 8. Off no es ítem de la lista.
+- Frase de confirmación, p. ej. *“Living · tap → cycle Relax, Bright, Night · double-tap → turn off Living · ring dims Living (on lights)”* o *“Lamps · tap → Velador 1 · double-tap → Velador 2 · ring dims those lights”*.
 
 ### 9.4 Simple-switch
 
@@ -416,7 +432,7 @@ Ya no hace falta inventar un canal `c1` / gpio `0` para satisfacer a la consola.
 
 ### 11.2 Config que baja al Round
 
-Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesita nombres, themes, eje de swipe, `dimTarget` y recetas (con listas y `name` de escena). Esos datos **sí** se envían al aparato (al revés del `switches.label`, que no viaja).
+Hoy: `{ rev, recipes[] }` con `channelId`. El Round necesita además `pages[]` con **grupo**, `dim`, nombres, themes, eje y recetas. Eso **sí** baja al aparato (el `switches.label` no).
 
 ```text
 {
@@ -428,13 +444,15 @@ Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesit
       id: "p1",
       name: "Living",
       theme: "ember",
-      dimTarget: { rtype: "grouped_light", rid: "living-gl-…" }
+      group: { rtype: "room", rid: "living-room-…", groupedLightRid: "living-gl-…" },
+      dim: { mode: "group", rid: "living-gl-…" }
     },
     {
-      id: "p2",
-      name: "Patio",
-      theme: "meadow",
-      dimTarget: { rtype: "grouped_light", rid: "patio-gl-…" }
+      id: "p3",
+      name: "Lamps",
+      theme: "night",
+      group: { rtype: "room", rid: "living-room-…", groupedLightRid: "living-gl-…" },
+      dim: { mode: "lights", rids: ["velador-1-…", "velador-2-…"] }
     }
   ],
   recipes: [
@@ -449,15 +467,15 @@ Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesit
       ]
     },
     { pageId: "p1", event: "double_click", action: "off", target: { rtype: "grouped_light", rid: "living-gl-…" } },
-    { pageId: "p2", event: "short", action: "toggle", target: { rtype: "grouped_light", rid: "patio-gl-…" } },
-    { pageId: "p2", event: "double_click", action: "off", target: { rtype: "grouped_light", rid: "patio-gl-…" } }
+    { pageId: "p3", event: "short", action: "toggle", target: { rtype: "light", rid: "velador-1-…" } },
+    { pageId: "p3", event: "double_click", action: "toggle", target: { rtype: "light", rid: "velador-2-…" } }
   ]
 }
 ```
 
-El orden de `pages[]` **es** el orden del swipe. El orden de `targets[]` en un `recall_scene` **es** el orden del ciclo. `id` de página estable (no se recicla al borrar). `rev` sube al guardar páginas, recetas (incluida la lista/orden de escenas), theme, nombre o eje.
+El orden de `pages[]` **es** el orden del swipe. El orden de `targets[]` en un `recall_scene` **es** el orden del ciclo. `id` de página estable (no se recicla al borrar). `rev` sube al guardar páginas, recetas, grupo, theme, nombre o eje.
 
-`recall_scene` usa `targets` (array, 1–8, todos `rtype: scene`, mismo group). Cada ítem lleva `name` (string Hue, el aparato recorta a 24 para NVS y luego al ancho del disco). `on` / `off` / `toggle` siguen con un solo `target` (`light` o `grouped_light`). El firmware Round no acepta `target` suelto en `recall_scene`.
+`recall_scene` usa `targets` (1–8 escenas del `group` de la página, con `name`). `on` / `off` / `toggle` usan un `target` que es el `grouped_light` de la página o una luz hija. El firmware no acepta `target` suelto en `recall_scene`.
 
 El firmware, si `rev` remoto > local, **reemplaza** páginas + recetas + eje (no es un patch). Igual que hoy con el array de recetas.
 
@@ -483,7 +501,7 @@ Necesario:
 
 - Discriminar producto en `switches` (`product` text: `simple` | `round`).
 - Ajustes de Round en el switch: `page_swipe_axis`.
-- Tabla (o JSON) de **páginas** por switch: `id`, `name`, `sort_order`, `theme`, `dimTarget` (nullable).
+- Tabla (o JSON) de **páginas** por switch: `id`, `name`, `sort_order`, `theme`, `group` (room/zone + grouped_light rid), `dim` (`group` \| `lights` \| null).
 - Recetas del Round ligadas a `page_id` + `event` (`short` | `double_click`).
 - `recall_scene` en Round guarda **varios** `rid` ordenados (tabla hija o JSON), no un solo `target_rid`.
 - Recetas del simple-switch se quedan como están (un `rid` por receta; no rotan).
@@ -500,14 +518,16 @@ Límites que el server valida:
 | Gestos | tap y doble siempre listos; receta opcional | Vacío = no-op; sin checkbox extra |
 | Recetas | ≤ 12 (6×2) | Cabe en NVS; firmware puede dejar `kMaxRecipes` en 16 o bajar |
 | Escenas por lista | 1–8 | Ciclo usable en pared; JSON/NVS |
-| Grupos en una lista | 1 (mismo room o zona) | Clip v2 aplica la escena a su grupo |
+| Grupo por página | 1 room o zona, obligatorio | Filtra luces y escenas |
+| Luces en `dim.mode=lights` | las de tap/doble, ≤ 2 | Un PUT por luz on |
 
 ---
 
 ## 13. Firmware (Round)
 
 - Poll igual: sin recetas/páginas ~1 min; con config al boot y cada 1 h. El dedo no espera.
-- NVS guarda `rev`, eje, páginas (id, nombre, theme, `dimTarget`), recetas (listas de escenas con `rid` + `name` ASCII), índice de página activa, último `rid` de escena por gesto (caché).
+- NVS guarda `rev`, eje, páginas (id, nombre, theme, group, `dim`), recetas (listas de escenas con `rid` + `name` ASCII), índice de página activa, último `rid` de escena por gesto (caché).
+- Aro `mode: lights`: GET de esos rid + PUT a las on (o prender el set si todas off). No copiar esos GET en el stack del loop.
 - Rotar escenas: GET de estado al Bridge + PUT de la siguiente (LAN). No llama a la consola.
 - Al cambiar de página: pintar de inmediato, GET de estado Hue del nuevo destino (on/brillo) en background. Un swipe no se bloquea a la red.
 - Si el `pageId` de la receta ya no existe: ignorar. Si el índice activo apunta a una página borrada: ir a la primera.
@@ -546,8 +566,8 @@ El S3 **tiene espacio de sobra** en flash y RAM. No hace falta framebuffer ni PS
 Aparatos Round que ya registraron `c1` + receta `short`:
 
 1. La consola los marca `product: round`.
-2. Crea una página `p1`, nombre `Page 1` (editable), theme `ember`, tap y doble vacíos salvo la receta migrada, `dimTarget` según §8.2.
-3. Copia la receta `c1`/`short` a `p1`/`short`. Si era `recall_scene` de un `rid`, queda una lista de un elemento.
+2. Crea una página `p1`, theme `ember`, tap/doble según la receta migrada.
+3. Copia `c1`/`short` a `p1`/`short`. Infere `group` del target (luz → su room; escena → su `group`; `grouped_light` → ese). Si no se puede inferir, la página queda sin grupo hasta que el usuario elija uno en consola (sin aro, recetas stale). `dim` según §8.2.
 4. El siguiente poll con `rev` nuevo baja el objeto de §11.2.
 5. Firmware viejo (sin parser de `pages`): **no se le puede mandar solo recipes con `pageId`**. Hasta flashear, o bien se dual-escribe `{ channelId: "c1", … }` (compat) o el aparato se queda con NVS viejo hasta el flash. v1 asume **flash de firmware junto con el corte de consola**. No hay requisito de dual-stack largo.
 
@@ -585,7 +605,7 @@ Estas no son código. Son el default si no se dice lo contrario.
 5. **Swipe left = siguiente** (índice +1). Right = anterior. Vertical: up = siguiente, down = anterior.
 6. **Wrap** en el carrusel.
 7. **Última página activa** se recuerda en NVS. Un reboot vuelve a esa.
-8. **`dimTarget` en la página**, calculado por la consola al guardar (§8.2). El firmware no resuelve grupos. `null` → sin aro.
+8. **Página = un room o zona.** Recetas solo de ese grupo. **`dim` al guardar** (§8.2): escena o acción de grupo → `grouped_light`; solo luces hijas → esas luces; si no, sin aro. El aro no es un slot.
 9. **Sin fallback** `double_click` → otra receta en el círculo.
 10. **Themes = las 20 paletas del prototipo**, set cerrado. Picker = grid de diales redondos (como `docs/round-themes.html`). Una por página. Default `ember`. No es el theme CSS del sitio.
 11. **Sin hold en el círculo.** Off vive en `double_click`. El swipe se decide por desplazamiento, no por reloj. BOOT hold 3 s (re-pair) no cambia.
@@ -598,6 +618,8 @@ Estas no son código. Son el default si no se dice lo contrario.
 18. **Sin textos explicativos en Ready.** Nada de `Tap to toggle` ni `Drag ring to dim`. El disco no enseña gestos. Estados de sistema sí tienen una línea de estado.
 19. **Página nueva: tap y doble visibles y vacíos.** Se asigna en consola o se deja vacío. Sin checkbox de gesto. El tap espera doble solo si doble tiene receta.
 20. **Nombres en el círculo = ASCII.** Página y escena: tildes/ñ se pliegan (`Niños` → `Ninos`). Fuente built-in 5×7.
+21. **Aro como la app Hue:** solo luces on del destino. Si el destino está todo off, el drag prende a ese %. `mode: lights` usa % absoluto en cada luz on, no un scale relativo.
+22. **Tap = velador y doble = off del grupo** → `dim.mode = group` (regla 2), no las luces sueltas.
 
 ---
 
@@ -616,13 +638,14 @@ Ninguna. Cerradas:
 
 Esta feature está **lista** cuando:
 
-- En la consola, un Round tiene páginas que se agregan, borra, reordenan, nombran y colorean.
-- Cada página tiene tap y doble optativos, con recetas al mismo árbol Hue de siempre.
-- Un gesto de escena acepta una lista ordenable del mismo room/zona; cada uso en el círculo aplica la siguiente. Off es el grupo en doble tap, no una escena ni un hold.
+- En la consola, un Round tiene páginas ancladas a un room/zona, que se agregan, borra, reordenan, nombran y colorean.
+- Tap y doble solo ven luces/escenas de ese grupo.
+- Un gesto de escena acepta una lista ordenable de **ese** grupo; cada uso aplica la siguiente. Off es el grupo en doble tap, no una escena.
+- El aro dimmea el grupo si hay escenas o acción de grupo; si solo hay luces hijas, dimmea esas (on only).
 - El círculo muestra el nombre de la página, debajo la escena activa si hay (sin how-to), puntos si hay más de una (lleno = en cuál estoy, sin salirse del disco), y el aro si toca.
 - En la consola, el theme de cada página se elige en un grid de diales redondos (las 20 paletas).
 - Un swipe en el eje configurado cambia de página **sin** llamar a Vercel ni al Bridge.
 - Tap / doble de esa página ejecutan NVS → Bridge. Swipe cambia de página. No hay hold de pantalla.
 - Un simple-switch en la misma consola sigue viéndose como canales GPIO.
 
-Hasta que se apruebe este documento, no hay implementación.
+La revisión de grupo + `dim.mode` no está en el firmware/consola actuales hasta que se implemente. El resto de páginas v1 ya corre.

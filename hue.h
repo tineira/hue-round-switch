@@ -157,11 +157,15 @@ inline bool hueRecallScene(const char *rid) {
 }
 
 inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *pct) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !rid[0]) {
     return false;
   }
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true, 4000);
+  if (code == HTTP_CODE_NOT_FOUND) {
+    Serial.printf("Hue GET state %s/%s 404 skip\n", rtype, rid);
+    return false;
+  }
   if (code != HTTP_CODE_OK) {
     Serial.printf("Hue GET state %s/%s %d\n", rtype, rid, code);
     return false;
@@ -183,8 +187,9 @@ inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
   return hueGetLightState(rtype, rid, nullptr, pct);
 }
 
-inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
+// PUT de brillo. turnOn agrega on.on=true (set lights todo off). 404 se salta.
+inline bool huePutDimming(const char *rtype, const char *rid, int pct, bool turnOn) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !rid[0]) {
     return false;
   }
   if (pct < 1) {
@@ -193,16 +198,28 @@ inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
   if (pct > 100) {
     pct = 100;
   }
-  char payload[72];
-  snprintf(payload, sizeof(payload), "{\"on\":{\"on\":true},\"dimming\":{\"brightness\":%d}}", pct);
+  char payload[80];
+  if (turnOn) {
+    snprintf(payload, sizeof(payload), "{\"on\":{\"on\":true},\"dimming\":{\"brightness\":%d}}", pct);
+  } else {
+    snprintf(payload, sizeof(payload), "{\"dimming\":{\"brightness\":%d}}", pct);
+  }
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true, 4000);
+  if (code == HTTP_CODE_NOT_FOUND) {
+    Serial.printf("Hue PUT dim %s/%s 404 skip\n", rtype, rid);
+    return false;
+  }
   if (code != HTTP_CODE_OK) {
     Serial.printf("Hue PUT dim %s/%s %d -> %d %s\n", rtype, rid, code, pct, body.c_str());
     return false;
   }
-  Serial.printf("Hue dim %d%%\n", pct);
+  Serial.printf("Hue dim %s/%s %d%%\n", rtype, rid, pct);
   return true;
+}
+
+inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
+  return huePutDimming(rtype, rid, pct, true);
 }
 
 inline bool hueToggle(const char *rtype, const char *rid, bool *nowOn) {

@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include "config.h"
 
-#define FIRMWARE_VERSION "0.4.2"
+#define FIRMWARE_VERSION "0.5.0"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
