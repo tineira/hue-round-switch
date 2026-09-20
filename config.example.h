@@ -14,5 +14,10 @@
 #define CONSOLE_URL "https://hue.tineira.com"
 #define CONSOLE_TOKEN "your-console-token"
 
+// 1 = USB serial logs (Serial Monitor). 0 = quieter/faster; flash still uses COM.
+#ifndef SERIAL_DEBUG
+#define SERIAL_DEBUG 0
+#endif
+
 // Bridge IP, Hue application key, and recipes are not stored here
 // (mDNS / pair / NVS / poll).

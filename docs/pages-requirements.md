@@ -284,7 +284,7 @@ Al disparar el gesto, el aparato:
 3. Si ninguna está activa (luces apagadas, o la app Hue puso otra escena) → PUT de la **primera**.
 4. El PUT es el de siempre: `PUT /clip/v2/resource/scene/{rid}` `{"recall":{"action":"active"}}`.
 
-El dedo no espera a Vercel. Sí puede esperar el GET+PUT al Bridge (LAN), igual que un `toggle`.
+El dedo no espera a Vercel. El GET+PUT al Bridge (LAN) **sí ocurre**; el círculo **no se congela** mientras tanto: tap, doble, aro y swipe siguen vivos. Detalle: `docs/input-during-hue.md`.
 
 Índice / último `rid` se puede cachear en NVS para ir rápido; la fuente de verdad de “cuál está puesta” es el Bridge, no el índice local (así un cambio en la app Hue no deja el círculo un paso atrás para siempre). Tras el PUT (o al entrar a la página), se pinta el `name` de ese `rid`.
 
@@ -530,6 +530,7 @@ Límites que el server valida:
 - Aro `mode: lights`: GET de esos rid + PUT a las on (o prender el set si todas off). No copiar esos GET en el stack del loop.
 - Rotar escenas: GET de estado al Bridge + PUT de la siguiente (LAN). No llama a la consola.
 - Al cambiar de página: pintar de inmediato, GET de estado Hue del nuevo destino (on/brillo) en background. Un swipe no se bloquea a la red.
+- GET/PUT de receta y dimmer **tampoco** bloquean el loop de toque. Last-wins si llega otro gesto. Ready no usa `UI_BUSY`. Ver `docs/input-during-hue.md`.
 - Si el `pageId` de la receta ya no existe: ignorar. Si el índice activo apunta a una página borrada: ir a la primera.
 - Si cambia el `bridgeid` emparejado: tirar páginas y recetas (los `rid` son de otro Bridge), dejar una página vacía default.
 - API key revocada: el poll falla; lo que hay en NVS **sigue** ejecutándose en la LAN.
@@ -620,6 +621,7 @@ Estas no son código. Son el default si no se dice lo contrario.
 20. **Nombres en el círculo = ASCII.** Página y escena: tildes/ñ se pliegan (`Niños` → `Ninos`). Fuente built-in 5×7.
 21. **Aro como la app Hue:** solo luces on del destino. Si el destino está todo off, el drag prende a ese %. `mode: lights` usa % absoluto en cada luz on, no un scale relativo.
 22. **Tap = velador y doble = off del grupo** → `dim.mode = group` (regla 2), no las luces sueltas.
+23. **Toques mientras Hue responde:** el disco sigue aceptando input. Ack optimista (invert, fill, escena, aro). Last-wins. Sin `UI_BUSY` en Ready. `docs/input-during-hue.md`.
 
 ---
 
@@ -645,7 +647,7 @@ Esta feature está **lista** cuando:
 - El círculo muestra el nombre de la página, debajo la escena activa si hay (sin how-to), puntos si hay más de una (lleno = en cuál estoy, sin salirse del disco), y el aro si toca.
 - En la consola, el theme de cada página se elige en un grid de diales redondos (las 20 paletas).
 - Un swipe en el eje configurado cambia de página **sin** llamar a Vercel ni al Bridge.
-- Tap / doble de esa página ejecutan NVS → Bridge. Swipe cambia de página. No hay hold de pantalla.
+- Tap / doble de esa página ejecutan NVS → Bridge **sin** congelar el toque (`docs/input-during-hue.md`). Swipe cambia de página. No hay hold de pantalla.
 - Un simple-switch en la misma consola sigue viéndose como canales GPIO.
 
 La revisión de grupo + `dim.mode` no está en el firmware/consola actuales hasta que se implemente. El resto de páginas v1 ya corre.

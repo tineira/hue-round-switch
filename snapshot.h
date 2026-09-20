@@ -201,13 +201,13 @@ inline bool hueStreamResource(const char *resource, JsonObjFn fn, void *ctx, int
     *countOut = sink.objects;
   }
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Hue stream %s %d\n", resource, code);
+    LOG("Hue stream %s %d\n", resource, code);
     return false;
   }
   if (sink.overflow) {
-    Serial.printf("Hue stream %s: object overflow\n", resource);
+    LOG("Hue stream %s: object overflow\n", resource);
   }
-  Serial.printf("Hue stream %s ok objects=%d\n", resource, sink.objects);
+  LOG("Hue stream %s ok objects=%d\n", resource, sink.objects);
   return true;
 }
 
@@ -234,7 +234,7 @@ inline bool hueBuildSnapshot(String *lights, String *rooms, String *scenes) {
   *lights += ']';
   *rooms += ']';
   *scenes += ']';
-  Serial.printf("Snapshot lights=%d rooms+zones=%d scenes=%d\n", lightCtx.count, roomCtx.count + zoneCtx.count,
+  LOG("Snapshot lights=%d rooms+zones=%d scenes=%d\n", lightCtx.count, roomCtx.count + zoneCtx.count,
                 sceneCtx.count);
   return true;
 }

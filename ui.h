@@ -337,6 +337,8 @@ inline void uiPaint() {
   const char *line = "";
   switch (gUi) {
     case UI_BOOT:
+      line = "";
+      break;
     case UI_WIFI:
       line = "Wi-Fi...";
       break;
@@ -362,7 +364,16 @@ inline void uiPaint() {
       line = "Hue error";
       break;
   }
-  if (gUi != UI_READY && gUi != UI_EMPTY) {
+  if (gUi == UI_BOOT) {
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "?"
+#endif
+    displayTextCenter("Round", 92, 1, t->mute);
+    displayTextCenter(FIRMWARE_VERSION, 120, 2, t->ink);
+  } else if (gUi == UI_WIFI) {
+    displayTextCenter(line, 148, 1, t->ink);
+    displayTextCenter(FIRMWARE_VERSION, 176, 1, t->mute);
+  } else if (gUi != UI_READY && gUi != UI_EMPTY) {
     displayTextCenter(line, 148, 1, t->ink);
   }
 
@@ -546,7 +557,7 @@ inline void uiOnPageChanged() {
   gSceneName[0] = 0;
   gNeedHueState = true;
   const Page *p = pagesActive();
-  Serial.printf("page %u/%u %s\n", gPageIndex + 1, gPageCount, p ? p->name : "");
+  LOG("page %u/%u %s\n", gPageIndex + 1, gPageCount, p ? p->name : "");
   if (gUi == UI_READY || gUi == UI_EMPTY) {
     uiPaint();
   }
@@ -749,7 +760,7 @@ inline void uiTouchEnd(unsigned long now) {
     if (gBriKnown) {
       uiDimPut(gBriPct);
     }
-    Serial.printf("dim %d%%\n", gBriPct);
+    LOG("dim %d%%\n", gBriPct);
     gDimDragging = false;
     gDimHavePct = false;
   }
@@ -830,7 +841,7 @@ inline void uiPollTouch(unsigned long now) {
       gDimDragging = true;
       gDimHavePct = false;
       gSecondTap = false;
-      Serial.printf("ring raw %u,%u xy %d,%d full=%d\n", gTouchRawX, gTouchRawY, x, y,
+      LOG("ring raw %u,%u xy %d,%d full=%d\n", gTouchRawX, gTouchRawY, x, y,
                     (int)gTouchFullRange);
       uiDimFromPoint(x, y);
       return;

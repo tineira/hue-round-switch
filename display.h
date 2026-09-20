@@ -33,7 +33,7 @@ inline bool displayBegin() {
     gLcd = new Arduino_GC9A01(gLcdBus, GFX_NOT_DEFINED, 0 /* rotation */, true /* IPS */);
   }
   if (!gLcd->begin(kLcdSpiHz)) {
-    Serial.println("display begin failed");
+    LOGLN("display begin failed");
     gDisplayOk = false;
     return false;
   }

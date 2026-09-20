@@ -85,24 +85,24 @@ enum FireResult { FIRE_NONE, FIRE_OK, FIRE_ERR };
 inline FireResult recipeFire(const char *pageId, const char *event, bool *nowOn = nullptr) {
   const HueRecipe *r = recipesFind(pageId, event);
   if (!r) {
-    Serial.printf("%s %s: no recipe\n", pageId ? pageId : "?", event ? event : "?");
+    LOG("%s %s: no recipe\n", pageId ? pageId : "?", event ? event : "?");
     return FIRE_NONE;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("%s %s skipped: WiFi down\n", pageId, event);
+    LOG("%s %s skipped: WiFi down\n", pageId, event);
     return FIRE_ERR;
   }
   if (strcmp(r->action, "recall_scene") == 0) {
-    Serial.printf("%s %s -> cycle %u scenes\n", pageId, event, r->sceneCount);
+    LOG("%s %s -> cycle %u scenes\n", pageId, event, r->sceneCount);
     if (!recipeRecallNext(r, nowOn)) {
-      Serial.println("Hue scene cycle failed");
+      LOGLN("Hue scene cycle failed");
       return FIRE_ERR;
     }
     return FIRE_OK;
   }
-  Serial.printf("%s %s -> %s %s/%s\n", pageId, event, r->action, r->rtype, r->rid);
+  LOG("%s %s -> %s %s/%s\n", pageId, event, r->action, r->rtype, r->rid);
   if (!hueExecute(r->action, r->rtype, r->rid, nowOn)) {
-    Serial.println("Hue action failed");
+    LOGLN("Hue action failed");
     return FIRE_ERR;
   }
   if (strcmp(r->action, "off") == 0) {
@@ -139,9 +139,9 @@ inline void bootPoll(unsigned long now) {
       (now - gBoot.pressStartMs) >= kLongPressMs) {
     gBoot.longPressHandled = true;
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("Re-pair skipped: WiFi down");
+      LOGLN("Re-pair skipped: WiFi down");
     } else if (hueRePair()) {
-      Serial.printf("Using Bridge %s\n", gHueBridgeIp.c_str());
+      LOG("Using Bridge %s\n", gHueBridgeIp.c_str());
       recipesBindBridge(gHueBridgeId);
       pagesBindBridge(gHueBridgeId);
       gNeedConsoleSync = true;

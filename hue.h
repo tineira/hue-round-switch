@@ -93,19 +93,19 @@ inline bool hueParseOn(const String &body, bool *on) {
 
 inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
   if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !on) {
-    Serial.println("Hue GET: begin failed");
+    LOGLN("Hue GET: begin failed");
     return false;
   }
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true);
-  Serial.printf("Hue GET %s/%s %d\n", rtype, rid, code);
+  LOG("Hue GET %s/%s %d\n", rtype, rid, code);
   if (code != HTTP_CODE_OK) {
-    Serial.println(body);
+    LOGLN(body);
     return false;
   }
   if (!jsonHueOn(body.c_str(), on)) {
-    Serial.println("Hue GET: could not parse on");
-    Serial.println(body);
+    LOGLN("Hue GET: could not parse on");
+    LOGLN(body);
     return false;
   }
   return true;
@@ -113,15 +113,15 @@ inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
 
 inline bool hueSetOn(const char *rtype, const char *rid, bool on) {
   if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
-    Serial.println("Hue PUT: begin failed");
+    LOGLN("Hue PUT: begin failed");
     return false;
   }
   const char *payload = on ? "{\"on\":{\"on\":true}}" : "{\"on\":{\"on\":false}}";
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true);
-  Serial.printf("Hue PUT %s/%s %d -> %s\n", rtype, rid, code, on ? "on" : "off");
+  LOG("Hue PUT %s/%s %d -> %s\n", rtype, rid, code, on ? "on" : "off");
   if (code != HTTP_CODE_OK) {
-    Serial.println(body);
+    LOGLN(body);
     return false;
   }
   return true;
@@ -134,7 +134,7 @@ inline bool hueSceneActive(const char *rid, bool *active) {
   String body;
   const int code = hueHttp(hueResourceUrl("scene", rid), "GET", nullptr, &body, true, true, 2500);
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Hue GET scene/%s %d\n", rid, code);
+    LOG("Hue GET scene/%s %d\n", rid, code);
     return false;
   }
   return jsonHueSceneActive(body.c_str(), active);
@@ -142,15 +142,15 @@ inline bool hueSceneActive(const char *rid, bool *active) {
 
 inline bool hueRecallScene(const char *rid) {
   if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid) {
-    Serial.println("Hue recall: begin failed");
+    LOGLN("Hue recall: begin failed");
     return false;
   }
   String body;
   const int code =
       hueHttp(hueResourceUrl("scene", rid), "PUT", "{\"recall\":{\"action\":\"active\"}}", &body, true, true);
-  Serial.printf("Hue recall scene/%s %d\n", rid, code);
+  LOG("Hue recall scene/%s %d\n", rid, code);
   if (code != HTTP_CODE_OK) {
-    Serial.println(body);
+    LOGLN(body);
     return false;
   }
   return true;
@@ -163,11 +163,11 @@ inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true, 4000);
   if (code == HTTP_CODE_NOT_FOUND) {
-    Serial.printf("Hue GET state %s/%s 404 skip\n", rtype, rid);
+    LOG("Hue GET state %s/%s 404 skip\n", rtype, rid);
     return false;
   }
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Hue GET state %s/%s %d\n", rtype, rid, code);
+    LOG("Hue GET state %s/%s %d\n", rtype, rid, code);
     return false;
   }
   bool parsed = false;
@@ -207,14 +207,14 @@ inline bool huePutDimming(const char *rtype, const char *rid, int pct, bool turn
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true, 4000);
   if (code == HTTP_CODE_NOT_FOUND) {
-    Serial.printf("Hue PUT dim %s/%s 404 skip\n", rtype, rid);
+    LOG("Hue PUT dim %s/%s 404 skip\n", rtype, rid);
     return false;
   }
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Hue PUT dim %s/%s %d -> %d %s\n", rtype, rid, code, pct, body.c_str());
+    LOG("Hue PUT dim %s/%s %d -> %d %s\n", rtype, rid, code, pct, body.c_str());
     return false;
   }
-  Serial.printf("Hue dim %s/%s %d%%\n", rtype, rid, pct);
+  LOG("Hue dim %s/%s %d%%\n", rtype, rid, pct);
   return true;
 }
 
@@ -270,6 +270,6 @@ inline bool hueExecute(const char *action, const char *rtype, const char *rid, b
   if (strcmp(action, "toggle") == 0) {
     return hueToggle(rtype, rid, nowOn);
   }
-  Serial.printf("Hue execute: unknown action %s\n", action);
+  LOG("Hue execute: unknown action %s\n", action);
   return false;
 }

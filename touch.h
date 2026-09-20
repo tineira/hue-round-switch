@@ -17,24 +17,24 @@ inline uint8_t gTouchRawX = 0;
 inline uint8_t gTouchRawY = 0;
 
 inline void touchScanI2c() {
-  Serial.print("I2C:");
+  LOGS("I2C:");
   gTouchFound = false;
   for (uint8_t a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) {
-      Serial.printf(" 0x%02x", a);
+      LOG(" 0x%02x", a);
       if (a == kTouchChsc || a == kTouchCst) {
         gTouchAddr = a;
         gTouchFound = true;
       }
     }
   }
-  Serial.println();
+  LOGLN("");
   if (!gTouchFound) {
-    Serial.println("touch: no CHSC6X/CST816S - trying 0x2E anyway");
+    LOGLN("touch: no CHSC6X/CST816S - trying 0x2E anyway");
     gTouchAddr = kTouchChsc;
   } else {
-    Serial.printf("touch addr 0x%02x\n", gTouchAddr);
+    LOG("touch addr 0x%02x\n", gTouchAddr);
   }
 }
 

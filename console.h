@@ -93,7 +93,7 @@ inline bool consoleRegister() {
     return false;
   }
   if (!gHueBridgeId.length() || !gHueBridgeIp.length()) {
-    Serial.println("console register skipped: no Bridge");
+    LOGLN("console register skipped: no Bridge");
     return false;
   }
 
@@ -122,13 +122,13 @@ inline bool consoleRegister() {
 
   String body;
   const int code = consoleHttp("POST", "/api/device/register", payload.c_str(), &body);
-  Serial.printf("console POST register %d\n", code);
+  LOG("console POST register %d\n", code);
   if (code != HTTP_CODE_OK) {
-    Serial.println(body);
+    LOGLN(body);
     return false;
   }
   gConsoleRegistered = true;
-  Serial.printf("console registered mac=%s\n", deviceMacHex().c_str());
+  LOG("console registered mac=%s\n", deviceMacHex().c_str());
   return true;
 }
 
@@ -140,13 +140,13 @@ inline void consoleFetchConfig() {
   path += deviceMacHex();
   String body;
   const int code = consoleHttp("GET", path, nullptr, &body);
-  Serial.printf("console GET config %d\n", code);
+  LOG("console GET config %d\n", code);
   if (code != HTTP_CODE_OK) {
     if (code == HTTP_CODE_UNAUTHORIZED) {
-      Serial.println("console unauthorized — NVS recipes kept");
+      LOGLN("console unauthorized — NVS recipes kept");
     }
     if (body.length()) {
-      Serial.println(body);
+      LOGLN(body);
     }
     return;
   }
@@ -154,11 +154,12 @@ inline void consoleFetchConfig() {
   const uint32_t localRev = gRecipeRev;
   const int remoteRev = jsonGetInt(body.c_str(), "rev", -1);
   if (remoteRev < 0) {
-    Serial.println("console config missing rev");
+    LOGLN("console config missing rev");
     return;
   }
   if (localRev >= static_cast<uint32_t>(remoteRev)) {
-    Serial.printf("console rev %u local %u — keep NVS\n", remoteRev, localRev);
+    LOG("console rev %u local %u — keep NVS\n", remoteRev, localRev);
+    pagesFillDimFromRecipes();
     return;
   }
 
@@ -167,7 +168,7 @@ inline void consoleFetchConfig() {
   if (!recipesParseConfig(body.c_str(), &rev)) {
     recipesLoad();
     pagesLoad();
-    Serial.println("console config parse failed — NVS restored");
+    LOGLN("console config parse failed — NVS restored");
     return;
   }
   gRecipeRev = rev;
@@ -175,12 +176,12 @@ inline void consoleFetchConfig() {
   pagesSave();
   gNeedHueState = true;
   gNeedFullPaint = true;
-  Serial.printf("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
+  LOG("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
 }
 
 inline void consoleBootSync() {
   if (!consoleConfigured()) {
-    Serial.println("console: CONSOLE_URL / CONSOLE_TOKEN not set");
+    LOGLN("console: CONSOLE_URL / CONSOLE_TOKEN not set");
     return;
   }
   consoleRegister();

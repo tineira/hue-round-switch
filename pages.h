@@ -307,11 +307,7 @@ inline void pageParseDim(const char *obj, Page *out) {
     return;
   }
   const char *dimObj = jsonObjectPtr(obj, "dim");
-  if (jsonHasKey(obj, "dim")) {
-    // dim presente (null u objeto): manda. Unknown/null → sin aro.
-    if (!dimObj) {
-      return;
-    }
+  if (dimObj) {
     char mode[16];
     mode[0] = 0;
     jsonGetString(dimObj, "mode", mode, sizeof(mode));
@@ -322,17 +318,15 @@ inline void pageParseDim(const char *obj, Page *out) {
       if (rid[0]) {
         out->dimMode = PAGE_DIM_GROUP;
         pageCopyField(out->dimGroupRid, sizeof(out->dimGroupRid), rid);
+        return;
       }
-      return;
-    }
-    if (strcmp(mode, "lights") == 0) {
+    } else if (strcmp(mode, "lights") == 0) {
       jsonEachArrayString(dimObj, "rids", pageParseDimRid, out);
       if (out->dimLightCount > 0) {
         out->dimMode = PAGE_DIM_LIGHTS;
+        return;
       }
-      return;
     }
-    return;
   }
   // Compat NVS viejo: dimTarget de un rid → group hasta el próximo poll.
   char rtype[16];
@@ -515,7 +509,7 @@ inline void pagesLoad() {
   gPageCount = n;
   pagesEnsureDefault();
   pagesClampIndex();
-  Serial.printf("NVS pages count=%u idx=%u axis=%s\n", gPageCount, gPageIndex,
+  LOG("NVS pages count=%u idx=%u axis=%s\n", gPageCount, gPageIndex,
                 gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal");
 }
 
@@ -524,7 +518,7 @@ inline void pagesBindBridge(const String &bid) {
     return;
   }
   if (gPageBridgeId.length() && !gPageBridgeId.equalsIgnoreCase(bid)) {
-    Serial.println("Bridge id changed — dropping pages");
+    LOGLN("Bridge id changed — dropping pages");
     gPageBridgeId = bid;
     pagesClear();
     return;

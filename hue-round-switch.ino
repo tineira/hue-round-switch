@@ -1,7 +1,8 @@
 #include <WiFi.h>
 #include "config.h"
+#include "log.h"
 
-#define FIRMWARE_VERSION "0.5.0"
+#define FIRMWARE_VERSION "0.5.7"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -24,20 +25,19 @@ static unsigned long gWifiLastTryMs = 0;
 
 static bool wifiWait(unsigned long maxMs) {
   const unsigned long start = millis();
-  Serial.print("WiFi");
+  LOGS("WiFi");
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < maxMs) {
     delay(250);
-    Serial.print(".");
+    LOGS(".");
     uiTick(millis());
   }
-  Serial.println();
+  LOGLN("");
   return WiFi.status() == WL_CONNECTED;
 }
 
 static void afterWifiUp() {
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-  Serial.printf("mac %s\n", deviceMacHex().c_str());
+  LOG("IP: %s\n", WiFi.localIP().toString().c_str());
+  LOG("mac %s\n", deviceMacHex().c_str());
   digitalWrite(LED_BUILTIN, HIGH);
 
   uiSet(UI_LOADING);
@@ -49,14 +49,14 @@ static void afterWifiUp() {
   };
 
   if (!hueEnsureReady()) {
-    Serial.println("Hue setup failed - press Bridge button if pairing, check Wi-Fi LAN");
+    LOGLN("Hue setup failed - press Bridge button if pairing, check Wi-Fi LAN");
     uiSet(UI_NO_BRIDGE);
     uiPaint();
     gHueReady = false;
     return;
   }
   gHueReady = true;
-  Serial.printf("Using Bridge %s id=%s\n", gHueBridgeIp.c_str(), gHueBridgeId.c_str());
+  LOG("Using Bridge %s id=%s\n", gHueBridgeIp.c_str(), gHueBridgeId.c_str());
   recipesBindBridge(gHueBridgeId);
   pagesBindBridge(gHueBridgeId);
   consoleBootSync();
@@ -65,27 +65,32 @@ static void afterWifiUp() {
     uiLoadLevel();
   }
   uiPaint();
-  Serial.println("tap/double = recipe. swipe = page. ring = dim. BOOT hold 3s = re-pair.");
+  LOGLN("tap/double = recipe. swipe = page. ring = dim. BOOT hold 3s = re-pair.");
 }
 
 void setup() {
+#if SERIAL_DEBUG
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
-  // TinyUSB CDC: el monitor no debe resetear al cerrar DTR (HWCDC del S3 sí lo hace en silicio).
-  Serial.enableReboot(false);
   delay(200);
+#endif
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
-  Serial.println("hue-round-switch");
-  Serial.printf("firmware %s  SSID: %s\n", FIRMWARE_VERSION, WIFI_SSID);
+  LOGLN("hue-round-switch");
+  LOG("firmware %s  SSID: %s\n", FIRMWARE_VERSION, WIFI_SSID);
 
   recipesLoad();
   pagesLoad();
+  pagesFillDimFromRecipes();
   bootBegin();
   displayBegin();
   touchBegin();
+
+  uiSet(UI_BOOT);
+  uiPaint();
+  delay(1000);
 
   uiSet(UI_WIFI);
   uiPaint();
@@ -96,7 +101,7 @@ void setup() {
   gWifiLastTryMs = millis();
 
   if (!wifiWait(15000)) {
-    Serial.printf("WiFi failed, status=%d (S3 needs the U.FL antenna)\n", (int)WiFi.status());
+    LOG("WiFi failed, status=%d (S3 needs the U.FL antenna)\n", (int)WiFi.status());
     uiSet(UI_WIFI_FAIL);
     uiPaint();
     return;
@@ -118,7 +123,7 @@ void loop() {
       gWifiLastTryMs = now;
       uiSet(UI_WIFI);
       uiPaint();
-      Serial.println("WiFi retry");
+      LOGLN("WiFi retry");
       WiFi.disconnect();
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
       wifiWait(8000);
