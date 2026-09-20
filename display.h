@@ -2,6 +2,7 @@
 
 #include <Arduino_GFX_Library.h>
 #include <SPI.h>
+#include "driver/gpio.h"
 
 // Round Display for XIAO: GC9A01 240×240. Pines Seeed (no User_Setup global).
 
@@ -22,9 +23,18 @@ inline constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
+// D6 = GPIO43 = U0TXD. Si UART deja el pin en idle HIGH, R18 (pull-up del Round)
+// mantiene el backlight encendido. Hay que resetear la matriz y forzar nivel.
+inline void displayBl(bool on) {
+  const gpio_num_t pin = static_cast<gpio_num_t>(kPinLcdBl);
+  gpio_hold_dis(pin);
+  gpio_reset_pin(pin);
+  gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+  gpio_set_level(pin, on ? 1 : 0);
+}
+
 inline bool displayBegin() {
-  pinMode(kPinLcdBl, OUTPUT);
-  digitalWrite(kPinLcdBl, HIGH);
+  displayBl(true);
 
   if (!gLcdBus) {
     gLcdBus = new Arduino_ESP32SPI(kPinLcdDc, kPinLcdCs, SCK, MOSI, MISO, FSPI);
@@ -42,20 +52,20 @@ inline bool displayBegin() {
   return true;
 }
 
-inline void displayBl(bool on) {
-  pinMode(kPinLcdBl, OUTPUT);
-  digitalWrite(kPinLcdBl, on ? HIGH : LOW);
-}
-
-// Reposo: panel negro y BL D6 off. Sleep del GC9A01 no hace falta en v1.
 inline void displayIdlePanel() {
   if (gDisplayOk && gLcd) {
     gLcd->fillScreen(RGB565_BLACK);
+    gLcd->displayOff();
   }
   displayBl(false);
 }
 
-inline void displayWakePanel() { displayBl(true); }
+inline void displayWakePanel() {
+  displayBl(true);
+  if (gDisplayOk && gLcd) {
+    gLcd->displayOn();
+  }
+}
 
 inline void displayTextCenter(const char *s, int16_t cy, uint8_t size, uint16_t color) {
   if (!gDisplayOk || !gLcd || !s) {
