@@ -110,7 +110,7 @@ inline bool consoleRegister() {
   jsonAppendEscaped(payload, gHueBridgeId.c_str());
   payload += ",\"bridge_ip\":";
   jsonAppendEscaped(payload, gHueBridgeIp.c_str());
-  payload += ",\"source\":\"xiao\",\"channels\":";
+  payload += ",\"product\":\"round\",\"source\":\"xiao\",\"channels\":";
   channelsAppendJson(payload);
   payload += ",\"lights\":";
   payload += lights;
@@ -153,25 +153,41 @@ inline void consoleFetchConfig() {
 
   const uint32_t localRev = gRecipeRev;
   const uint8_t localCount = gRecipeCount;
+  const uint8_t localPages = gPageCount;
+  const uint8_t localIdx = gPageIndex;
+  const PageSwipeAxis localAxis = gPageSwipeAxis;
   HueRecipe backup[kMaxRecipes];
+  Page pageBackup[kMaxPages];
   memcpy(backup, gRecipes, sizeof(backup));
+  memcpy(pageBackup, gPages, sizeof(pageBackup));
 
   uint32_t rev = 0;
   if (!recipesParseConfig(body.c_str(), &rev)) {
     memcpy(gRecipes, backup, sizeof(backup));
+    memcpy(gPages, pageBackup, sizeof(pageBackup));
     gRecipeCount = localCount;
+    gPageCount = localPages;
+    gPageIndex = localIdx;
+    gPageSwipeAxis = localAxis;
     Serial.println("console config parse failed");
     return;
   }
   if (localRev >= rev) {
     memcpy(gRecipes, backup, sizeof(backup));
+    memcpy(gPages, pageBackup, sizeof(pageBackup));
     gRecipeCount = localCount;
+    gPageCount = localPages;
+    gPageIndex = localIdx;
+    gPageSwipeAxis = localAxis;
     Serial.printf("console rev %u local %u — keep NVS\n", rev, localRev);
     return;
   }
   gRecipeRev = rev;
   recipesSave();
-  Serial.printf("console rev %u — replaced %u recipes\n", gRecipeRev, gRecipeCount);
+  pagesSave();
+  gNeedHueState = true;
+  gNeedFullPaint = true;
+  Serial.printf("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
 }
 
 inline void consoleBootSync() {

@@ -3,17 +3,27 @@
 #include <Preferences.h>
 #include <string.h>
 #include "json_util.h"
+#include "pages.h"
 
-// Recetas en NVS: el GPIO solo mira esto, nunca Vercel.
+// Recetas en NVS (clave distinta a páginas). El dedo solo mira esto, nunca Vercel.
 
 static const uint8_t kMaxRecipes = 16;
+static const uint8_t kMaxScenes = 8;
+static const size_t kNvsStrMax = 3900;
+
+struct RecipeScene {
+  char rid[40];
+  char name[25];
+};
 
 struct HueRecipe {
-  char channelId[12];
+  char pageId[16];
   char event[16];
   char action[16];
   char rtype[16];
   char rid[40];
+  uint8_t sceneCount;
+  RecipeScene scenes[kMaxScenes];
 };
 
 inline HueRecipe gRecipes[kMaxRecipes];
@@ -23,8 +33,7 @@ inline String gRecipeBridgeId;
 inline bool gNeedConsoleSync = false;
 
 inline bool recipeEventOk(const char *e) {
-  return e && (strcmp(e, "on") == 0 || strcmp(e, "off") == 0 || strcmp(e, "double_click") == 0 ||
-               strcmp(e, "short") == 0);
+  return e && (strcmp(e, "short") == 0 || strcmp(e, "double_click") == 0);
 }
 
 inline bool recipeActionOk(const char *a) {
@@ -48,38 +57,87 @@ inline void recipeCopyField(char *dst, size_t n, const char *src) {
   dst[n - 1] = 0;
 }
 
-inline String recipesToJson() {
+inline void recipeAppendOneJson(String &s, const HueRecipe &r) {
+  s += "{\"pageId\":";
+  jsonAppendEscaped(s, r.pageId);
+  s += ",\"event\":";
+  jsonAppendEscaped(s, r.event);
+  s += ",\"action\":";
+  jsonAppendEscaped(s, r.action);
+  if (strcmp(r.action, "recall_scene") == 0 && r.sceneCount > 0) {
+    s += ",\"targets\":[";
+    for (uint8_t t = 0; t < r.sceneCount; t++) {
+      if (t) {
+        s += ',';
+      }
+      s += "{\"rtype\":\"scene\",\"rid\":";
+      jsonAppendEscaped(s, r.scenes[t].rid);
+      s += ",\"name\":";
+      jsonAppendEscaped(s, r.scenes[t].name);
+      s += '}';
+    }
+    s += ']';
+  } else {
+    s += ",\"target\":{\"rtype\":";
+    jsonAppendEscaped(s, r.rtype);
+    s += ",\"rid\":";
+    jsonAppendEscaped(s, r.rid);
+    s += '}';
+  }
+  s += '}';
+}
+
+inline String recipesToJsonRange(uint8_t from, uint8_t to) {
   String s = "[";
-  for (uint8_t i = 0; i < gRecipeCount; i++) {
-    if (i) {
+  bool first = true;
+  for (uint8_t i = from; i < to && i < gRecipeCount; i++) {
+    if (!first) {
       s += ',';
     }
-    s += "{\"channelId\":";
-    jsonAppendEscaped(s, gRecipes[i].channelId);
-    s += ",\"event\":";
-    jsonAppendEscaped(s, gRecipes[i].event);
-    s += ",\"action\":";
-    jsonAppendEscaped(s, gRecipes[i].action);
-    s += ",\"target\":{\"rtype\":";
-    jsonAppendEscaped(s, gRecipes[i].rtype);
-    s += ",\"rid\":";
-    jsonAppendEscaped(s, gRecipes[i].rid);
-    s += "}}";
+    first = false;
+    recipeAppendOneJson(s, gRecipes[i]);
   }
   s += "]";
   return s;
+}
+
+inline String recipesToJson() { return recipesToJsonRange(0, gRecipeCount); }
+
+inline void recipeParseSceneTarget(const char *obj, void *ctx) {
+  HueRecipe *r = static_cast<HueRecipe *>(ctx);
+  if (!r || r->sceneCount >= kMaxScenes) {
+    return;
+  }
+  char rtype[16];
+  char rid[40];
+  char name[48];
+  rtype[0] = 0;
+  rid[0] = 0;
+  name[0] = 0;
+  jsonGetString(obj, "rtype", rtype, sizeof(rtype));
+  jsonGetString(obj, "rid", rid, sizeof(rid));
+  jsonGetString(obj, "name", name, sizeof(name));
+  if (!rid[0]) {
+    return;
+  }
+  if (rtype[0] && strcmp(rtype, "scene") != 0) {
+    return;
+  }
+  RecipeScene &sc = r->scenes[r->sceneCount];
+  memset(&sc, 0, sizeof(sc));
+  recipeCopyField(sc.rid, sizeof(sc.rid), rid);
+  asciiFoldClip(sc.name, sizeof(sc.name), name, kSceneNameMax);
+  r->sceneCount++;
 }
 
 inline bool recipeFromObject(const char *obj, HueRecipe *out) {
   if (!obj || !out) {
     return false;
   }
-  char channelId[12];
+  char pageId[16];
   char event[16];
   char action[16];
-  char rtype[16];
-  char rid[40];
-  if (!jsonGetString(obj, "channelId", channelId, sizeof(channelId)) || !channelId[0]) {
+  if (!jsonGetString(obj, "pageId", pageId, sizeof(pageId)) || !pageId[0]) {
     return false;
   }
   if (!jsonGetString(obj, "event", event, sizeof(event)) || !recipeEventOk(event)) {
@@ -88,16 +146,32 @@ inline bool recipeFromObject(const char *obj, HueRecipe *out) {
   if (!jsonGetString(obj, "action", action, sizeof(action)) || !recipeActionOk(action)) {
     return false;
   }
+  memset(out, 0, sizeof(*out));
+  recipeCopyField(out->pageId, sizeof(out->pageId), pageId);
+  recipeCopyField(out->event, sizeof(out->event), event);
+  recipeCopyField(out->action, sizeof(out->action), action);
+
+  if (strcmp(action, "recall_scene") == 0) {
+    jsonEachArrayObject(obj, "targets", recipeParseSceneTarget, out);
+    if (out->sceneCount < 1) {
+      return false;
+    }
+    recipeCopyField(out->rtype, sizeof(out->rtype), "scene");
+    recipeCopyField(out->rid, sizeof(out->rid), out->scenes[0].rid);
+    return true;
+  }
+
+  char rtype[16];
+  char rid[40];
   if (!jsonGetObjectString(obj, "target", "rtype", rtype, sizeof(rtype)) || !recipeRtypeOk(rtype)) {
     return false;
   }
   if (!jsonGetObjectString(obj, "target", "rid", rid, sizeof(rid)) || !rid[0]) {
     return false;
   }
-  memset(out, 0, sizeof(*out));
-  recipeCopyField(out->channelId, sizeof(out->channelId), channelId);
-  recipeCopyField(out->event, sizeof(out->event), event);
-  recipeCopyField(out->action, sizeof(out->action), action);
+  if (strcmp(rtype, "scene") == 0) {
+    return false;
+  }
   recipeCopyField(out->rtype, sizeof(out->rtype), rtype);
   recipeCopyField(out->rid, sizeof(out->rid), rid);
   return true;
@@ -117,10 +191,10 @@ inline void recipesParseOne(const char *obj, void *ctx) {
 }
 
 inline bool recipesParseArray(const char *json, uint8_t *countOut) {
-  uint8_t n = 0;
+  uint8_t n = countOut ? *countOut : 0;
   if (!json) {
     if (countOut) {
-      *countOut = 0;
+      *countOut = n;
     }
     return false;
   }
@@ -128,8 +202,7 @@ inline bool recipesParseArray(const char *json, uint8_t *countOut) {
     return false;
   }
   jsonEachArrayObject(json, "recipes", recipesParseOne, &n);
-  // NVS guarda el array suelto, sin clave "recipes".
-  if (n == 0 && json[0] == '[') {
+  if (json[0] == '[') {
     const char *p = json;
     const char *start = nullptr;
     int depth = 0;
@@ -189,23 +262,32 @@ inline bool recipesParseArray(const char *json, uint8_t *countOut) {
   return true;
 }
 
-inline bool recipesParseConfig(const char *body, uint32_t *revOut) {
-  if (!body || !revOut) {
-    return false;
+static const char *kRecipeJsonKeys[] = {"json", "j1", "j2", "j3"};
+static const uint8_t kRecipeJsonParts = 4;
+
+inline void recipesSaveJson(Preferences &prefs) {
+  uint8_t idx = 0;
+  for (uint8_t part = 0; part < kRecipeJsonParts; part++) {
+    if (idx >= gRecipeCount) {
+      prefs.putString(kRecipeJsonKeys[part], "");
+      continue;
+    }
+    uint8_t take = 0;
+    String chunk = "[]";
+    while (idx + take < gRecipeCount) {
+      const String next = recipesToJsonRange(idx, static_cast<uint8_t>(idx + take + 1));
+      if (take > 0 && next.length() >= kNvsStrMax) {
+        break;
+      }
+      chunk = next;
+      take++;
+      if (chunk.length() >= kNvsStrMax) {
+        break;
+      }
+    }
+    prefs.putString(kRecipeJsonKeys[part], chunk);
+    idx = static_cast<uint8_t>(idx + take);
   }
-  if (!jsonHasKey(body, "rev") || !strstr(body, "\"recipes\"")) {
-    return false;
-  }
-  const int rev = jsonGetInt(body, "rev", -1);
-  if (rev < 0) {
-    return false;
-  }
-  gRecipeCount = 0;
-  uint8_t n = 0;
-  jsonEachArrayObject(body, "recipes", recipesParseOne, &n);
-  gRecipeCount = n;
-  *revOut = static_cast<uint32_t>(rev);
-  return true;
 }
 
 inline void recipesSave() {
@@ -213,7 +295,7 @@ inline void recipesSave() {
   prefs.begin("recipes", false);
   prefs.putUInt("rev", gRecipeRev);
   prefs.putString("bid", gRecipeBridgeId);
-  prefs.putString("json", recipesToJson());
+  recipesSaveJson(prefs);
   prefs.end();
 }
 
@@ -228,12 +310,17 @@ inline void recipesLoad() {
   prefs.begin("recipes", true);
   gRecipeRev = prefs.getUInt("rev", 0);
   gRecipeBridgeId = prefs.getString("bid", "");
-  const String json = prefs.getString("json", "[]");
-  prefs.end();
   gRecipeCount = 0;
-  uint8_t n = 0;
-  recipesParseArray(json.c_str(), &n);
-  gRecipeCount = n;
+  for (uint8_t part = 0; part < kRecipeJsonParts; part++) {
+    const String json = prefs.getString(kRecipeJsonKeys[part], part == 0 ? "[]" : "");
+    if (!json.length() || json == "[]") {
+      continue;
+    }
+    uint8_t n = gRecipeCount;
+    recipesParseArray(json.c_str(), &n);
+    gRecipeCount = n;
+  }
+  prefs.end();
   Serial.printf("NVS recipes rev=%u count=%u\n", gRecipeRev, gRecipeCount);
 }
 
@@ -253,23 +340,67 @@ inline void recipesBindBridge(const String &bid) {
   }
 }
 
-inline void recipesReplace(uint32_t rev, const HueRecipe *list, uint8_t n) {
-  gRecipeRev = rev;
-  gRecipeCount = n > kMaxRecipes ? kMaxRecipes : n;
-  if (list && gRecipeCount) {
-    memcpy(gRecipes, list, sizeof(HueRecipe) * gRecipeCount);
-  }
-  recipesSave();
-}
-
-inline const HueRecipe *recipesFind(const char *channelId, const char *event) {
-  if (!channelId || !event) {
+inline const HueRecipe *recipesFind(const char *pageId, const char *event) {
+  if (!pageId || !event) {
     return nullptr;
   }
   for (uint8_t i = 0; i < gRecipeCount; i++) {
-    if (strcmp(gRecipes[i].channelId, channelId) == 0 && strcmp(gRecipes[i].event, event) == 0) {
+    if (strcmp(gRecipes[i].pageId, pageId) == 0 && strcmp(gRecipes[i].event, event) == 0) {
       return &gRecipes[i];
     }
   }
   return nullptr;
+}
+
+inline const HueRecipe *recipesFindScene(const char *pageId) {
+  const HueRecipe *r = recipesFind(pageId, "short");
+  if (r && strcmp(r->action, "recall_scene") == 0 && r->sceneCount > 0) {
+    return r;
+  }
+  r = recipesFind(pageId, "double_click");
+  if (r && strcmp(r->action, "recall_scene") == 0 && r->sceneCount > 0) {
+    return r;
+  }
+  return nullptr;
+}
+
+inline bool recipesParseConfig(const char *body, uint32_t *revOut) {
+  if (!body || !revOut) {
+    return false;
+  }
+  if (!jsonHasKey(body, "rev") || !strstr(body, "\"recipes\"") || !strstr(body, "\"pages\"")) {
+    return false;
+  }
+  const int rev = jsonGetInt(body, "rev", -1);
+  if (rev < 0) {
+    return false;
+  }
+  char keepId[16];
+  keepId[0] = 0;
+  if (pagesActive()) {
+    recipeCopyField(keepId, sizeof(keepId), pagesActive()->id);
+  }
+  if (!pagesParseConfig(body)) {
+    return false;
+  }
+  gRecipeCount = 0;
+  uint8_t n = 0;
+  jsonEachArrayObject(body, "recipes", recipesParseOne, &n);
+  gRecipeCount = n;
+  if (keepId[0]) {
+    bool found = false;
+    for (uint8_t i = 0; i < gPageCount; i++) {
+      if (strcmp(gPages[i].id, keepId) == 0) {
+        gPageIndex = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      gPageIndex = 0;
+    }
+  }
+  pagesClampIndex();
+  *revOut = static_cast<uint32_t>(rev);
+  return true;
 }

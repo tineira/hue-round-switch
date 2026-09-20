@@ -3,10 +3,11 @@
 #include <math.h>
 #include "channels.h"
 #include "display.h"
+#include "pages.h"
 #include "recipes.h"
 #include "touch.h"
 
-// Copy en inglés. El círculo es el producto: gastar tiempo en estos estados.
+// Copy en inglés. Ready no enseña gestos.
 
 enum UiScreen {
   UI_BOOT = 0,
@@ -21,20 +22,19 @@ enum UiScreen {
   UI_ERROR,
 };
 
+enum TouchMode { TOUCH_IDLE = 0, TOUCH_CENTER, TOUCH_RING };
+
 static const int16_t kBtnRadius = 88;
 static const int16_t kRingGrabInner = 96;
 static const int16_t kRingOuter = 118;
 static const int16_t kRingInner = 104;
 static const float kLevelStartDeg = 135.0f;
 static const float kLevelSpanDeg = 270.0f;
-static const uint16_t kColBg = 0x10A2;
-static const uint16_t kColInk = 0xEF7D;
-static const uint16_t kColMute = 0x7BEF;
-static const uint16_t kColAmber = 0xFCE0;
-static const uint16_t kColAmberDim = 0xA240;
-static const uint16_t kColOffFill = 0x2104;
-static const uint16_t kColOffInner = 0x3186;
-static const uint16_t kColRed = 0xF800;
+static const int16_t kNameY = 92;
+static const int16_t kSceneY = 114;
+static const int16_t kDotsY = 197;
+static const unsigned long kDoubleTapMs = 350;
+static const int16_t kSwipeMinPx = 40;
 static const uint16_t kColYellow = 0xFFE0;
 
 inline UiScreen gUi = UI_BOOT;
@@ -43,8 +43,6 @@ inline bool gUiPressed = false;
 inline unsigned long gUiErrorUntilMs = 0;
 inline unsigned long gUiPulseMs = 0;
 inline bool gTouchDown = false;
-inline unsigned long gTouchDownMs = 0;
-inline unsigned long gTouchLastFireMs = 0;
 inline bool gDimDragging = false;
 inline bool gDimHavePct = false;
 inline int gBriPct = 50;
@@ -60,40 +58,40 @@ inline unsigned long gTouchLastPtMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
 inline int16_t gTouchX = -1;
 inline int16_t gTouchY = -1;
+inline int16_t gTouchStartX = -1;
+inline int16_t gTouchStartY = -1;
+inline TouchMode gTouchMode = TOUCH_IDLE;
+inline bool gSwipeDone = false;
+inline bool gTapWaitDouble = false;
+inline bool gSecondTap = false;
+inline unsigned long gTapWaitMs = 0;
+inline bool gSceneHave = false;
+inline char gSceneName[25] = {0};
 
-inline const HueRecipe *uiC1Recipe() {
-  const HueRecipe *r = recipesFind("c1", "short");
-  if (!r) {
-    r = recipesFind("c1", "on");
-  }
-  return r;
-}
+inline UiScreen uiFromRecipes() { return gPageCount > 0 ? UI_READY : UI_EMPTY; }
 
-inline UiScreen uiFromRecipes() { return uiC1Recipe() ? UI_READY : UI_EMPTY; }
-
-inline const HueRecipe *uiDimRecipe() {
-  const HueRecipe *r = uiC1Recipe();
-  if (!r || !r->rtype[0] || !r->rid[0]) {
-    return nullptr;
-  }
-  if (strcmp(r->rtype, "scene") == 0 || strcmp(r->action, "recall_scene") == 0) {
-    return nullptr;
-  }
-  return r;
-}
-
-inline const HueRecipe *uiStateRecipe() {
-  const HueRecipe *r = uiC1Recipe();
-  if (!r || !r->rtype[0] || !r->rid[0]) {
-    return nullptr;
-  }
-  if (strcmp(r->rtype, "light") == 0 || strcmp(r->rtype, "grouped_light") == 0) {
-    return r;
-  }
-  return nullptr;
-}
+inline bool uiPageHasDouble() { return recipesFind(pagesActiveId(), "double_click") != nullptr; }
 
 inline bool uiLightLit() { return !gLightOnKnown || gLightOn; }
+
+inline const PageTheme *uiTheme() {
+  if (gUi == UI_READY || gUi == UI_BUSY || gUi == UI_EMPTY) {
+    return pagesActiveTheme();
+  }
+  return themeEmber();
+}
+
+inline uint16_t uiFillCol(const PageTheme *t) { return uiLightLit() ? t->fillOn : t->fillOff; }
+
+inline uint16_t uiInkCol(const PageTheme *t) { return uiLightLit() ? t->ink : t->mute; }
+
+inline uint16_t uiSceneCol(const PageTheme *t) {
+  return colorMix565(t->ink, uiFillCol(t), 88);
+}
+
+inline uint16_t uiDotIdleCol(const PageTheme *t) {
+  return colorMix565(t->ink, uiFillCol(t), 42);
+}
 
 inline float uiClockDeg(int16_t x, int16_t y) {
   const float deg = atan2f((float)(x - kScreenCx), (float)(kScreenCy - y)) * (180.0f / 3.14159265f);
@@ -108,6 +106,16 @@ inline int uiClampPct(int v) {
     return 100;
   }
   return v;
+}
+
+inline int16_t uiDiscChord(int16_t y, int16_t r) {
+  const int32_t dy = (int32_t)y - kScreenCy;
+  const int32_t r2 = (int32_t)r * r;
+  const int32_t d2 = dy * dy;
+  if (d2 >= r2) {
+    return 0;
+  }
+  return (int16_t)(2.0f * sqrtf((float)(r2 - d2)));
 }
 
 // fillArc: 0° = 3 o'clock, horario. El aro de brillo va de 135° a 135+270°.
@@ -156,13 +164,15 @@ inline float uiLevelAngle(int pct) {
 }
 
 inline void uiDrawLevel() {
-  if (!gDisplayOk || !gLcd || gUi != UI_READY || !uiDimRecipe()) {
+  if (!gDisplayOk || !gLcd || gUi != UI_READY || !pagesHasDim()) {
     return;
   }
+  const PageTheme *t = uiTheme();
   const int pct = gBriKnown ? gBriPct : 0;
-  const uint16_t fillCol = uiLightLit() ? kColAmber : 0x5AEB;
+  const uint16_t fillCol = uiLightLit() ? t->accent : colorMix565(t->accent, t->ringTrack, 40);
+  const uint16_t track = t->ringTrack;
   if (gBriShown < 0) {
-    uiFillArcSpan(kLevelStartDeg, kLevelStartDeg + kLevelSpanDeg, 0x3186);
+    uiFillArcSpan(kLevelStartDeg, kLevelStartDeg + kLevelSpanDeg, track);
     if (pct > 0) {
       uiFillArcSpan(kLevelStartDeg, uiLevelAngle(pct), fillCol);
     }
@@ -182,7 +192,7 @@ inline void uiDrawLevel() {
   if (pct > gBriShown) {
     uiFillArcSpan(uiLevelAngle(gBriShown), uiLevelAngle(pct), fillCol);
   } else {
-    uiFillArcSpan(uiLevelAngle(pct), uiLevelAngle(gBriShown), 0x3186);
+    uiFillArcSpan(uiLevelAngle(pct), uiLevelAngle(gBriShown), track);
   }
   gBriShown = pct;
 }
@@ -197,27 +207,27 @@ inline void uiSet(UiScreen s) {
 }
 
 inline uint16_t uiRingColor(UiScreen s, unsigned long now) {
+  const PageTheme *t = uiTheme();
   switch (s) {
     case UI_LOADING:
-      return ((now / 400) % 2) ? kColMute : kColAmberDim;
+      return ((now / 400) % 2) ? t->mute : colorMix565(t->accent, t->bg, 50);
     case UI_PAIRING:
-      return ((now / 280) % 2) ? kColYellow : kColAmberDim;
+      return ((now / 280) % 2) ? kColYellow : t->accent;
     case UI_BUSY:
-      return ((now / 180) % 2) ? kColInk : kColAmber;
+      return ((now / 180) % 2) ? t->ink : t->accent;
     case UI_ERROR:
-      return kColRed;
     case UI_WIFI_FAIL:
     case UI_NO_BRIDGE:
-      return kColRed;
+      return t->error;
     case UI_EMPTY:
-      return kColMute;
+      return t->mute;
     case UI_READY:
       if (!uiLightLit()) {
-        return gUiPressed ? kColMute : 0x4208;
+        return gUiPressed ? t->mute : t->ringTrack;
       }
-      return gUiPressed ? kColInk : kColAmber;
+      return gUiPressed ? t->ink : t->accent;
     default:
-      return kColMute;
+      return t->mute;
   }
 }
 
@@ -225,59 +235,81 @@ inline void uiDrawRings(unsigned long now) {
   if (!gDisplayOk || !gLcd) {
     return;
   }
+  const PageTheme *t = uiTheme();
   const uint16_t ring = uiRingColor(gUi, now);
-  if (!(gUi == UI_READY && uiDimRecipe())) {
+  if (!(gUi == UI_READY && pagesHasDim())) {
     gLcd->drawCircle(kScreenCx, kScreenCy, kRingOuter, ring);
   }
   gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius, ring);
   gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 1, ring);
   if (gUiPressed && (gUi == UI_READY || gUi == UI_EMPTY)) {
-    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 2, kColInk);
-    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 3, kColInk);
+    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 2, t->ink);
+    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 3, t->ink);
   } else {
-    uint16_t rest = kColBg;
+    uint16_t rest = t->bg;
     if (gUi == UI_READY || gUi == UI_BUSY) {
-      rest = uiLightLit() ? kColAmberDim : kColOffInner;
+      rest = uiLightLit() ? colorMix565(t->fillOn, t->accent, 70) : colorMix565(t->fillOff, t->ink, 85);
     }
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 2, rest);
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 3, rest);
   }
 }
 
-inline const char *uiActionLine(const HueRecipe *r) {
-  if (!r) {
-    return "Assign in console";
-  }
-  if (strcmp(r->action, "toggle") == 0) {
-    return "Tap to toggle";
-  }
-  if (strcmp(r->action, "on") == 0) {
-    return "Tap to turn on";
-  }
-  if (strcmp(r->action, "off") == 0) {
-    return "Tap to turn off";
-  }
-  if (strcmp(r->action, "recall_scene") == 0) {
-    return "Tap for scene";
-  }
-  return "Tap";
-}
-
-inline void uiDrawButton() {
-  if (!gDisplayOk || !gLcd || gUi != UI_READY) {
+inline void uiDrawPageDots(const PageTheme *t) {
+  if (!gDisplayOk || !gLcd || gPageCount < 2) {
     return;
   }
+  const uint8_t n = gPageCount;
+  const int16_t y = kDotsY;
+  const int16_t budget = uiDiscChord(y, kBtnRadius) - 16;
+  int d = 6;
+  int gap = 10;
+  auto width = [&]() { return n * d + (n - 1) * gap; };
+  if (width() > budget) {
+    gap = 4;
+  }
+  if (width() > budget) {
+    d = 4;
+    gap = 4;
+  }
+  if (width() > budget || budget < 8) {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u/%u", gPageIndex + 1, n);
+    displayTextCenter(buf, y, 1, uiDotIdleCol(t));
+    return;
+  }
+  const int total = width();
+  const int16_t x0 = kScreenCx - (int16_t)total / 2 + d / 2;
+  const uint16_t idle = uiDotIdleCol(t);
+  const uint16_t on = t->ink;
+  for (uint8_t i = 0; i < n; i++) {
+    const int16_t x = x0 + (int16_t)i * (int16_t)(d + gap);
+    gLcd->fillCircle(x, y, d / 2, i == gPageIndex ? on : idle);
+  }
+}
+
+inline void uiDrawReadyFace() {
+  if (!gDisplayOk || !gLcd) {
+    return;
+  }
+  const PageTheme *t = uiTheme();
   const bool lit = uiLightLit();
-  const uint16_t fill = lit ? kColAmberDim : kColOffFill;
-  const uint16_t inner = gUiPressed ? (lit ? kColAmber : kColOffInner) : fill;
+  const uint16_t fill = uiFillCol(t);
+  const uint16_t inner = gUiPressed ? (lit ? t->accent : colorMix565(fill, t->ink, 80)) : fill;
   gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, fill);
   gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius - (gUiPressed ? 4 : 6), inner);
   uiDrawRings(millis());
-  displayTextCenter("1", 92, 4, lit ? kColInk : kColMute);
-  displayTextCenter(uiActionLine(uiC1Recipe()), 148, 1, lit ? kColInk : kColMute);
-  if (uiDimRecipe()) {
-    displayTextCenter("Drag ring to dim", 166, 1, kColMute);
+
+  const Page *p = pagesActive();
+  const char *name = p && p->name[0] ? p->name : "Page";
+  const int16_t nameBudget = uiDiscChord(kNameY, kBtnRadius) - 16;
+  displayTextEllipsis(name, kNameY, 2, uiInkCol(t), nameBudget, 1);
+
+  if (gSceneHave && gSceneName[0] && lit) {
+    const int16_t sceneBudget = uiDiscChord(kSceneY, kBtnRadius) - 16;
+    displayTextEllipsis(gSceneName, kSceneY, 1, uiSceneCol(t), sceneBudget, 8);
   }
+  uiDrawPageDots(t);
 }
 
 inline void uiPaint() {
@@ -287,17 +319,17 @@ inline void uiPaint() {
   }
 
   const unsigned long now = millis();
-  gLcd->fillScreen(kColBg);
+  const PageTheme *t = uiTheme();
+  gLcd->fillScreen(t->bg);
 
-  if (gUi == UI_READY) {
-    uiDrawButton();
+  if (gUi == UI_READY || gUi == UI_EMPTY) {
+    uiDrawReadyFace();
   } else {
     const uint16_t ring = uiRingColor(gUi, now);
-    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, kColBg);
+    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, t->bg);
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius, ring);
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 1, ring);
     gLcd->drawCircle(kScreenCx, kScreenCy, kRingOuter, ring);
-    displayTextCenter("1", 92, 4, kColMute);
   }
 
   const char *line = "";
@@ -319,8 +351,6 @@ inline void uiPaint() {
       line = "Press Bridge button";
       break;
     case UI_EMPTY:
-      line = "Assign in console";
-      break;
     case UI_READY:
       break;
     case UI_BUSY:
@@ -330,20 +360,18 @@ inline void uiPaint() {
       line = "Hue error";
       break;
   }
-  if (gUi != UI_READY) {
-    displayTextCenter(line, 148, 1, kColInk);
+  if (gUi != UI_READY && gUi != UI_EMPTY) {
+    displayTextCenter(line, 148, 1, t->ink);
   }
 
   if (gUi == UI_WIFI_FAIL) {
-    displayTextCenter("Plug the antenna", 168, 1, kColMute);
+    displayTextCenter("Plug the antenna", 168, 1, t->mute);
   } else if (gUi == UI_LOADING) {
-    displayTextCenter("Connecting", 166, 1, kColMute);
+    displayTextCenter("Connecting", 166, 1, t->mute);
   } else if (gUi == UI_PAIRING) {
-    displayTextCenter("on the Hue Bridge", 166, 1, kColMute);
-  } else if (gUi == UI_EMPTY) {
-    displayTextCenter("Channel 1", 166, 1, kColMute);
+    displayTextCenter("on the Hue Bridge", 166, 1, t->mute);
   } else if (gUi == UI_NO_BRIDGE) {
-    displayTextCenter("same LAN as Bridge", 166, 1, kColMute);
+    displayTextCenter("same LAN as Bridge", 166, 1, t->mute);
   }
 
   if (gUi == UI_READY) {
@@ -358,27 +386,39 @@ inline void uiPaint() {
 inline bool uiNeedsPulse(UiScreen s) { return s == UI_PAIRING || s == UI_LOADING; }
 
 inline bool uiRefreshState(bool force) {
-  const HueRecipe *r = uiStateRecipe();
-  if (!r) {
+  const char *rtype = nullptr;
+  const char *rid = nullptr;
+  const PageDimTarget *dim = pagesDimTarget();
+  if (dim) {
+    rtype = dim->rtype;
+    rid = dim->rid;
+  } else {
+    const HueRecipe *r = recipesFind(pagesActiveId(), "short");
+    if (r && r->rid[0] && (strcmp(r->rtype, "light") == 0 || strcmp(r->rtype, "grouped_light") == 0)) {
+      rtype = r->rtype;
+      rid = r->rid;
+    }
+  }
+  if (!rtype || !rid || !rid[0]) {
     gLightOnKnown = false;
     gBriKnown = false;
     gBriRid[0] = 0;
     return false;
   }
-  if (!force && gBriLocal && gLightOnKnown && gBriRid[0] && strcmp(gBriRid, r->rid) == 0) {
+  if (!force && gBriLocal && gLightOnKnown && gBriRid[0] && strcmp(gBriRid, rid) == 0) {
     return false;
   }
   bool on = gLightOn;
   int pct = gBriPct;
-  if (!hueGetLightState(r->rtype, r->rid, &on, uiDimRecipe() ? &pct : nullptr)) {
+  if (!hueGetLightState(rtype, rid, &on, pagesHasDim() ? &pct : nullptr)) {
     return false;
   }
-  recipeCopyField(gBriRid, sizeof(gBriRid), r->rid);
+  recipeCopyField(gBriRid, sizeof(gBriRid), rid);
   const bool onChanged = !gLightOnKnown || on != gLightOn;
-  const bool briChanged = uiDimRecipe() && (!gBriKnown || uiClampPct(pct) != gBriPct);
+  const bool briChanged = pagesHasDim() && (!gBriKnown || uiClampPct(pct) != gBriPct);
   gLightOn = on;
   gLightOnKnown = true;
-  if (uiDimRecipe()) {
+  if (pagesHasDim()) {
     gBriPct = uiClampPct(pct);
     gBriKnown = true;
   }
@@ -386,14 +426,53 @@ inline bool uiRefreshState(bool force) {
   return onChanged || briChanged;
 }
 
-inline void uiLoadLevel() { uiRefreshState(false); }
+inline bool uiRefreshScene() {
+  gSceneHave = false;
+  gSceneName[0] = 0;
+  const HueRecipe *r = recipesFindScene(pagesActiveId());
+  if (!r) {
+    return false;
+  }
+  if (gLightOnKnown && !gLightOn) {
+    return true;
+  }
+  const int idx = recipeFindActiveScene(r);
+  if (idx < 0) {
+    return true;
+  }
+  recipeCopyField(gSceneName, sizeof(gSceneName), r->scenes[idx].name);
+  gSceneHave = gSceneName[0] != 0;
+  return true;
+}
 
-inline void uiSyncFace() {
-  if (gUi != UI_READY) {
+inline void uiApplyLastSceneName() {
+  gSceneHave = false;
+  gSceneName[0] = 0;
+  const HueRecipe *r = recipesFindScene(pagesActiveId());
+  const char *rid = pagesLastSceneRid();
+  if (!r || !rid || !rid[0]) {
     return;
   }
-  uiDrawButton();
-  if (uiDimRecipe()) {
+  for (uint8_t i = 0; i < r->sceneCount; i++) {
+    if (strcmp(r->scenes[i].rid, rid) == 0) {
+      recipeCopyField(gSceneName, sizeof(gSceneName), r->scenes[i].name);
+      gSceneHave = gSceneName[0] != 0;
+      return;
+    }
+  }
+}
+
+inline void uiLoadLevel() {
+  uiRefreshState(false);
+  uiRefreshScene();
+}
+
+inline void uiSyncFace() {
+  if (gUi != UI_READY && gUi != UI_EMPTY) {
+    return;
+  }
+  uiDrawReadyFace();
+  if (pagesHasDim()) {
     gBriShown = -1;
     uiDrawLevel();
   }
@@ -403,21 +482,74 @@ inline void uiSetLightOn(bool on) {
   const bool changed = !gLightOnKnown || on != gLightOn;
   gLightOn = on;
   gLightOnKnown = true;
+  if (!on) {
+    gSceneHave = false;
+    gSceneName[0] = 0;
+  }
   if (changed) {
     uiSyncFace();
   }
+}
+
+inline void uiOnPageChanged() {
+  gUiPressed = false;
+  gLightOnKnown = false;
+  gBriKnown = false;
+  gBriLocal = false;
+  gBriRid[0] = 0;
+  gBriShown = -1;
+  gSceneHave = false;
+  gSceneName[0] = 0;
+  gNeedHueState = true;
+  const Page *p = pagesActive();
+  Serial.printf("page %u/%u %s\n", gPageIndex + 1, gPageCount, p ? p->name : "");
+  if (gUi == UI_READY || gUi == UI_EMPTY) {
+    uiPaint();
+  }
+}
+
+inline bool uiFireEvent(const char *event) {
+  if (gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING || gUi == UI_PAIRING ||
+      gUi == UI_BOOT) {
+    return false;
+  }
+  bool on = gLightOn;
+  const FireResult fr = recipeFire(pagesActiveId(), event, &on);
+  if (fr == FIRE_ERR) {
+    gUiPressed = false;
+    uiSet(UI_ERROR);
+    uiPaint();
+    return false;
+  }
+  if (fr == FIRE_NONE) {
+    return true;
+  }
+  uiSetLightOn(on);
+  if (on) {
+    uiApplyLastSceneName();
+    uiSyncFace();
+  }
+  return true;
 }
 
 inline void uiTick(unsigned long now) {
   if (gDimDragging) {
     return;
   }
+  if (gTapWaitDouble && !gTouchDown && !gSecondTap && (now - gTapWaitMs) >= kDoubleTapMs) {
+    gTapWaitDouble = false;
+    uiFireEvent("short");
+  }
   if (gUi == UI_ERROR && now >= gUiErrorUntilMs) {
     uiSet(uiFromRecipes());
   }
+  if (gNeedFullPaint) {
+    gNeedFullPaint = false;
+    uiPaint();
+  }
   if (gUi != gUiPainted) {
     if (gUi == UI_READY) {
-      uiLoadLevel();
+      gNeedHueState = true;
     }
     uiPaint();
     return;
@@ -426,24 +558,37 @@ inline void uiTick(unsigned long now) {
     uiDrawRings(now);
     gUiPulseMs = now;
   }
-  if (gUi == UI_READY && !gTouchDown && now - gLightPollMs >= 20000) {
-    gLightPollMs = now;
-    if (uiRefreshState(true)) {
+  if ((gUi == UI_READY || gUi == UI_EMPTY) && !gTouchDown) {
+    if (gNeedHueState) {
+      gNeedHueState = false;
+      gLightPollMs = now;
+      uiRefreshState(true);
+      uiRefreshScene();
       uiSyncFace();
+    } else if (now - gLightPollMs >= 20000) {
+      gLightPollMs = now;
+      const bool st = uiRefreshState(true);
+      const bool hadScene = gSceneHave;
+      char prevName[25];
+      memcpy(prevName, gSceneName, sizeof(prevName));
+      uiRefreshScene();
+      if (st || hadScene != gSceneHave || memcmp(prevName, gSceneName, sizeof(prevName)) != 0) {
+        uiSyncFace();
+      }
     }
   }
 }
 
 inline bool uiDimPut(int pct) {
-  const HueRecipe *r = uiDimRecipe();
-  if (!r || WiFi.status() != WL_CONNECTED) {
+  const PageDimTarget *d = pagesDimTarget();
+  if (!d || WiFi.status() != WL_CONNECTED) {
     return false;
   }
   pct = uiClampPct(pct);
   if (pct == gBriLastSent) {
     return true;
   }
-  if (!hueSetBrightness(r->rtype, r->rid, pct)) {
+  if (!hueSetBrightness(d->rtype, d->rid, pct)) {
     return false;
   }
   gBriLastSent = pct;
@@ -469,7 +614,7 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   if (!uiLightLit()) {
     gLightOn = true;
     gLightOnKnown = true;
-    uiDrawButton();
+    uiDrawReadyFace();
     gBriShown = -1;
   }
   if (pct != gBriShown) {
@@ -477,25 +622,38 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   }
 }
 
-inline bool uiOnTap() {
-  if (gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING || gUi == UI_PAIRING ||
-      gUi == UI_BOOT) {
+inline bool uiTrySwipe(int16_t x, int16_t y) {
+  if (gSwipeDone || gPageCount <= 1 || gTouchMode != TOUCH_CENTER) {
     return false;
   }
-  if (!uiC1Recipe()) {
-    uiSet(UI_EMPTY);
-    uiPaint();
-    return false;
+  const int16_t dx = (int16_t)(x - gTouchStartX);
+  const int16_t dy = (int16_t)(y - gTouchStartY);
+  if (gPageSwipeAxis == PAGE_SWIPE_VERTICAL) {
+    if (abs(dy) < kSwipeMinPx) {
+      return false;
+    }
+    gSwipeDone = true;
+    gTapWaitDouble = false;
+    gSecondTap = false;
+    if (dy < 0) {
+      pagesNext();
+    } else {
+      pagesPrev();
+    }
+  } else {
+    if (abs(dx) < kSwipeMinPx) {
+      return false;
+    }
+    gSwipeDone = true;
+    gTapWaitDouble = false;
+    gSecondTap = false;
+    if (dx < 0) {
+      pagesNext();
+    } else {
+      pagesPrev();
+    }
   }
-  bool on = gLightOn;
-  const bool ok = recipeFire("c1", "short", &on);
-  if (!ok) {
-    gUiPressed = false;
-    uiSet(UI_ERROR);
-    uiPaint();
-    return false;
-  }
-  uiSetLightOn(on);
+  uiOnPageChanged();
   return true;
 }
 
@@ -507,23 +665,36 @@ inline void uiTouchEnd(unsigned long now) {
     Serial.printf("dim %d%%\n", gBriPct);
     gDimDragging = false;
     gDimHavePct = false;
-    if (gUi == UI_READY) {
-      uiDrawButton();
-      gBriShown = -1;
-      uiDrawLevel();
-    }
   }
-  const bool wasPressed = gUiPressed;
+
+  const bool wasCenter = gTouchMode == TOUCH_CENTER;
+  const bool swiped = gSwipeDone;
   gTouchDown = false;
   gUiPressed = false;
+  gTouchMode = TOUCH_IDLE;
+  gSwipeDone = false;
   gTouchIgnoreUntil = now + 40;
-  if (gUi == UI_READY) {
-    uiDrawButton();
-    if (uiDimRecipe()) {
+
+  if (wasCenter && !swiped && (gUi == UI_READY || gUi == UI_EMPTY)) {
+    if (gSecondTap) {
+      gSecondTap = false;
+      gTapWaitDouble = false;
+      uiFireEvent("double_click");
+    } else if (uiPageHasDouble()) {
+      gTapWaitDouble = true;
+      gTapWaitMs = now;
+    } else {
+      uiFireEvent("short");
+    }
+  } else {
+    gSecondTap = false;
+  }
+
+  if (gUi == UI_READY || gUi == UI_EMPTY) {
+    uiDrawReadyFace();
+    if (pagesHasDim()) {
       uiDrawLevel();
     }
-  } else if (wasPressed && gUi == UI_EMPTY) {
-    uiDrawRings(now);
   }
 }
 
@@ -551,29 +722,43 @@ inline void uiPollTouch(unsigned long now) {
     if (!irq || !hasPt || now < gTouchIgnoreUntil) {
       return;
     }
+    const bool inBtn = touchHitButton(x, y, kBtnRadius);
+    const bool inRing = touchHitRing(x, y, kRingGrabInner, kRingOuter + 8);
+    if (gUi != UI_READY && gUi != UI_EMPTY) {
+      return;
+    }
+    if (gTapWaitDouble && inRing && pagesHasDim()) {
+      gTapWaitDouble = false;
+      uiFireEvent("short");
+    }
     gTouchDown = true;
-    gTouchDownMs = now;
     gTouchLastPtMs = now;
     gTouchX = x;
     gTouchY = y;
-    const bool inBtn = touchHitButton(x, y, kBtnRadius);
-    const bool inRing = touchHitRing(x, y, kRingGrabInner, kRingOuter + 8);
-    if (gUi == UI_READY && inRing && uiDimRecipe()) {
+    gTouchStartX = x;
+    gTouchStartY = y;
+    gSwipeDone = false;
+    if (inRing && pagesHasDim()) {
+      gTouchMode = TOUCH_RING;
       gDimDragging = true;
       gDimHavePct = false;
+      gSecondTap = false;
       Serial.printf("ring raw %u,%u xy %d,%d full=%d\n", gTouchRawX, gTouchRawY, x, y,
                     (int)gTouchFullRange);
       uiDimFromPoint(x, y);
       return;
     }
-    if (inBtn && (gUi == UI_READY || gUi == UI_EMPTY)) {
+    if (inBtn) {
+      gTouchMode = TOUCH_CENTER;
+      if (gTapWaitDouble) {
+        gSecondTap = true;
+      }
       gUiPressed = true;
       uiDrawRings(now);
-      if (now - gTouchLastFireMs >= 250) {
-        gTouchLastFireMs = now;
-        uiOnTap();
-      }
+      return;
     }
+    gTouchMode = TOUCH_IDLE;
+    gTouchDown = false;
     return;
   }
 
@@ -583,6 +768,8 @@ inline void uiPollTouch(unsigned long now) {
     gTouchY = y;
     if (gDimDragging) {
       uiDimFromPoint(x, y);
+    } else if (gTouchMode == TOUCH_CENTER) {
+      uiTrySwipe(x, y);
     }
   } else if (irq) {
     gTouchLastPtMs = now;

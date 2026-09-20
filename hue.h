@@ -127,6 +127,19 @@ inline bool hueSetOn(const char *rtype, const char *rid, bool on) {
   return true;
 }
 
+inline bool hueSceneActive(const char *rid, bool *active) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid || !rid[0] || !active) {
+    return false;
+  }
+  String body;
+  const int code = hueHttp(hueResourceUrl("scene", rid), "GET", nullptr, &body, true, true, 2500);
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("Hue GET scene/%s %d\n", rid, code);
+    return false;
+  }
+  return jsonHueSceneActive(body.c_str(), active);
+}
+
 inline bool hueRecallScene(const char *rid) {
   if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid) {
     Serial.println("Hue recall: begin failed");

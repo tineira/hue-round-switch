@@ -162,6 +162,102 @@ inline bool jsonHueOn(const char *json, bool *on) {
   return false;
 }
 
+// Clip v2 scene: status.active es inactive | static | dynamic_palette.
+inline bool jsonHueSceneActive(const char *json, bool *active) {
+  if (!json || !active) {
+    return false;
+  }
+  const char *st = strstr(json, "\"status\"");
+  if (!st) {
+    return false;
+  }
+  const char *a = strstr(st, "\"active\"");
+  if (!a) {
+    return false;
+  }
+  a = strchr(a + 8, ':');
+  if (!a) {
+    return false;
+  }
+  a++;
+  while (*a == ' ' || *a == '\t' || *a == '\n' || *a == '\r') {
+    a++;
+  }
+  if (*a != '"') {
+    return false;
+  }
+  a++;
+  *active = strncmp(a, "inactive", 8) != 0;
+  return true;
+}
+
+// Fuente 5×7: ñ→n, tildes fuera. El círculo no pinta UTF-8.
+inline void asciiFold(char *dst, size_t dstSz, const char *src) {
+  if (!dst || dstSz == 0) {
+    return;
+  }
+  dst[0] = 0;
+  if (!src) {
+    return;
+  }
+  static const char kC3[64] = {
+      'A', 'A', 'A', 'A', 'A', 'A', 'A', 'C', 'E', 'E', 'E', 'E', 'I', 'I', 'I', 'I',
+      'D', 'N', 'O', 'O', 'O', 'O', 'O', 'x', 'O', 'U', 'U', 'U', 'U', 'Y', 'T', 's',
+      'a', 'a', 'a', 'a', 'a', 'a', 'a', 'c', 'e', 'e', 'e', 'e', 'i', 'i', 'i', 'i',
+      'd', 'n', 'o', 'o', 'o', 'o', 'o', 'x', 'o', 'u', 'u', 'u', 'u', 'y', 't', 'y'};
+  size_t o = 0;
+  const uint8_t *p = reinterpret_cast<const uint8_t *>(src);
+  while (*p && o + 1 < dstSz) {
+    const uint8_t c = *p++;
+    if (c < 0x80) {
+      if (c >= 32 && c != 127) {
+        dst[o++] = static_cast<char>(c);
+      }
+      continue;
+    }
+    if ((c & 0xE0) == 0xC0 && *p) {
+      const uint8_t c2 = *p++;
+      if (c == 0xC3 && c2 >= 0x80) {
+        dst[o++] = kC3[c2 - 0x80];
+      }
+      continue;
+    }
+    if ((c & 0xF0) == 0xE0 && p[0] && p[1]) {
+      p += 2;
+      continue;
+    }
+    if ((c & 0xF8) == 0xF0 && p[0] && p[1] && p[2]) {
+      p += 3;
+      continue;
+    }
+  }
+  dst[o] = 0;
+}
+
+inline void asciiFoldClip(char *dst, size_t dstSz, const char *src, uint8_t maxChars) {
+  char fold[96];
+  asciiFold(fold, sizeof(fold), src);
+  if (!dst || dstSz == 0) {
+    return;
+  }
+  if (maxChars + 1 < dstSz) {
+    dstSz = static_cast<size_t>(maxChars) + 1;
+  }
+  const size_t n = strlen(fold);
+  if (n + 1 <= dstSz) {
+    memcpy(dst, fold, n + 1);
+    return;
+  }
+  if (dstSz < 2) {
+    dst[0] = 0;
+    return;
+  }
+  size_t keep = dstSz - 2;
+  memcpy(dst, fold, keep);
+  dst[keep] = '.';
+  dst[keep + 1] = 0;
+}
+
 inline bool jsonHueBrightness(const char *json, int *pct) {
   if (!json || !pct) {
     return false;

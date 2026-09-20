@@ -38,7 +38,7 @@ El usuario está de pie, a un brazo, tocando un círculo de 39 mm. La UI tiene q
 
 ## 3. Idea
 
-Una **página** es la configuración activa del display: nombre en pantalla, theme de color, gestos de centro habilitados y recetas de esos gestos. El aro sigue siendo dimmer del destino dimmable de esa página.
+Una **página** es la configuración activa del display: nombre en pantalla, theme de color y recetas de tap / doble (cada una opcional). El aro sigue siendo dimmer del `dimTarget` de esa página.
 
 Varias páginas viven en el mismo aparato. El swipe (eje elegido **por display** en la consola) pasa de una a otra. No es una receta Hue: es navegación local.
 
@@ -61,7 +61,7 @@ Un gesto de escena no apunta a un `rid` suelto: apunta a una **lista ordenada** 
 
 **Puntos de página.** Abajo del disco interior (como en `docs/round-themes.html`). Un punto por página, en el orden de la consola. El punto **lleno** es la página activa; los demás, apagados. Con una sola página no se dibujan. Cerrado: no es un adorno del prototipo, es el chrome del círculo. **Nunca overflow:** la fila entera queda dentro del disco interior; no se recorta contra el borde redondo ni se mete al aro. Una sola fila, nunca wrap. Ver §5.1.
 
-**Gesto de centro.** Ocurre en el disco interior (radio ≤ 88). Eventos de receta: `short` (tap) y `double_click` (doble tap). Cada página elige cuáles están **habilitados**. Si el doble está apagado, el tap no espera la ventana del segundo toque. **No hay hold** en pantalla.
+**Gesto de centro.** Ocurre en el disco interior (radio ≤ 88). Eventos de receta: `short` (tap) y `double_click` (doble tap). En la consola **los dos huecos siempre están**; el usuario asigna receta o los deja vacíos. Vacío = no-op. Si doble no tiene receta, el tap no espera la ventana del segundo toque. **No hay hold** en pantalla.
 
 **Aro / dimmer.** Disco exterior (radio ~96–118). No es receta. Drag + PUT de brillo al soltar, igual que hoy. Destino dimmable: un `light` / `grouped_light`, o el grupo padre de una lista de escenas.
 
@@ -174,12 +174,12 @@ Un trazo se clasifica al bajar. No se reconvierte a mitad de gesto.
 
 | Gesto | Evento de receta | Condición |
 | --- | --- | --- |
-| Tap | `short` | Poco movimiento al soltar. Si doble está habilitado, espera la ventana (~350 ms) por un segundo tap |
-| Doble tap | `double_click` | Segundo tap en la ventana, mismo disco. Solo si la página lo tiene habilitado |
+| Tap | `short` | Poco movimiento al soltar. Si doble **tiene receta**, espera ~350 ms por un segundo tap |
+| Doble tap | `double_click` | Segundo tap en la ventana, mismo disco. Solo si doble tiene receta |
 
-Huecos vacíos (gesto habilitado, sin receta): no-op. **No** hay fallback `double_click` → `on` en el círculo (eso es del contacto `maintained` de pared).
+Hueco sin receta: no-op. **No** hay fallback `double_click` → `on` en el círculo (eso es del contacto `maintained` de pared).
 
-Si `double_click` está **apagado** en esa página, el tap no espera la ventana del segundo toque. Por eso el doble se configura por página.
+Si `double_click` **no tiene receta**, el tap no espera la ventana del segundo toque. Tener receta en doble es lo que retrasa el tap ~350 ms. No hay checkbox aparte de “activar gesto”.
 
 El tap **deja de dispararse al down**. Hoy `uiOnTap()` corre al poner el dedo; con doble/swipe eso es incorrecto. Disparo al **up**.
 
@@ -191,7 +191,7 @@ No es receta. No llama al Bridge.
 
 - Eje del **aparato**: `horizontal` (default) o `vertical`.
 - Recorrido mínimo en el eje ≈ 40 px. En cuanto se cruza, es swipe (no se espera a soltar ni a ningún hold). El eje ortogonal se ignora (un tap tembloroso no pasa de página).
-- Dirección: en horizontal, swipe left → página siguiente (índice +1); swipe right → anterior. En vertical, up → siguiente, down → anterior. (Por confirmar en Open questions; es convención tipo carrusel.)
+- Dirección: swipe **left** → página siguiente (índice +1); right → anterior. Si el eje es vertical: up → siguiente, down → anterior.
 - Wrap: última +1 → primera, y al revés.
 - Una página: el gesto no hace nada.
 - Feedback: al cambiar, se pinta la página nueva de inmediato. Animación de slide: no es requisito v1.
@@ -226,7 +226,7 @@ El disco en Ready **no** lleva frases de ayuda. Solo nombre, escena si hay, punt
 
 El dígito `1` del canal deja de ser el título.
 
-Nombres de página > 12 caracteres: la consola avisa; el aparato trunca con ellipsis. Escenas: §5.2. Sin saltos de línea.
+Nombres de página > 12 caracteres: la consola avisa; el aparato trunca con ellipsis. Escenas: §5.2. ASCII: tildes/ñ se pliegan. Sin saltos de línea.
 
 Estados de sistema (inglés, una línea): `Wi-Fi...`, `No Wi-Fi`, `No Bridge`, `Press Bridge button`, `Hue error`. No son páginas.
 
@@ -243,13 +243,7 @@ Una receta sigue siendo acción Hue + destino(s). La clave deja de ser `(channel
 
 Vacío = no hace nada. Guardar incompleto es válido (solo tap, sin doble).
 
-**Destino de dimmer de la página (aro):**
-
-1. Si `short` es `light` o `grouped_light` → ese target.
-2. Si `short` (u otro gesto habilitado, en ese orden) es `recall_scene` → el `grouped_light` del room/zona de esa lista.
-3. Si nada de eso → sin aro.
-
-No hay un slot extra “dimmer” en la consola en v1. El aro no gasta un evento.
+**Destino de dimmer de la página (aro):** la consola lo calcula al guardar y lo baja en `pages[].dimTarget` (ver §8.2). El usuario no elige un slot “dimmer”. El aro no gasta un evento.
 
 ### 8.1 Lista de escenas (rotar)
 
@@ -280,6 +274,29 @@ El dedo no espera a Vercel. Sí puede esperar el GET+PUT al Bridge (LAN), igual 
 
 Índice / último `rid` se puede cachear en NVS para ir rápido; la fuente de verdad de “cuál está puesta” es el Bridge, no el índice local (así un cambio en la app Hue no deja el círculo un paso atrás para siempre). Tras el PUT (o al entrar a la página), se pinta el `name` de ese `rid`.
 
+### 8.2 `dimTarget` (aro)
+
+El firmware **no** adivina el grupo de una escena con GET extra. El poll trae el destino de brillo ya resuelto.
+
+En cada página:
+
+```text
+dimTarget: { rtype: "light" | "grouped_light", rid: "…" } | null
+```
+
+`null` / omitido → sin aro.
+
+La consola lo recalcula **al guardar** recetas de esa página, con el snapshot:
+
+1. Si `short` apunta a `light` o `grouped_light` → ese `target`.
+2. Si `short` es `recall_scene` → el `grouped_light` del room/zona de esa lista (todas las escenas son del mismo group).
+3. Si no, lo mismo con `double_click` (por si tap está vacío y doble es el dimmable).
+4. Si nada es dimmable → `null`.
+
+Un light suelto se dimmea a sí mismo, no al room. Un ciclo de escenas de Living dimmea el `grouped_light` de Living. Si el usuario cambia la lista a otro room, el siguiente save reescribe `dimTarget`.
+
+El aparato solo hace PUT de `dimming` a ese rid. Si el rid ya no existe (404), igual que un target de receta stale.
+
 ---
 
 ## 9. Consola
@@ -300,14 +317,13 @@ Al seleccionar un Round Display (no un simple-switch), la columna izquierda **no
 
 Mínimo 1 página (no se puede borrar la última: queda vacía, asignable). Máximo **6**.
 
-Página nueva: nombre `Page 2` (inglés, editable al tiro), theme default, tap habilitado, doble apagado, sin recetas.
+Página nueva: nombre `Page 2` (inglés, editable al tiro), theme `ember`, **tap y doble visibles y vacíos**, `dimTarget` null. El usuario asigna lo que quiera (o nada).
 
 ### 9.3 Editor de una página
 
 - **Name** — input, máx. 12 caracteres. Es lo que se ve en el círculo.
 - **Theme** — picker visual de **diales redondos**, el mismo lenguaje que `hue-round-switch/docs/round-themes.html` (no el dropdown CSS del sitio). Una paleta por página: click en el círculo la elige (anillo de seleccionado). On/Off en el preview para ver luz prendida vs apagada. El nombre en el dial de muestra puede ser el de la página. El usuario no edita hex.
-- **Gestures** — checkboxes: Tap, Double tap. Al menos uno debe quedar on. Deshabilitar doble es lo que hace al tap más inmediato (no espera ~350 ms).
-- **Slots de receta** — solo los gestos habilitados. Elegir el hueco, click en la topología de la derecha. Defaults de acción según §8.
+- **Slots de receta** — siempre **Tap** y **Double tap**, asignables o vacíos. Elegir el hueco, click en la topología de la derecha. Defaults de acción según §8. Vacío = esa acción no hace nada y, si el vacío es el doble, el tap no espera. No hay checkboxes de “activar gesto”.
 - **Lista de escenas** — si el hueco queda en `recall_scene` (click en una escena, o default de doble tap):
   - Click en una escena del **mismo** room/zona la **agrega** al final (si aún no está).
   - Click en una escena que ya está en la lista la **saca**.
@@ -400,7 +416,7 @@ Ya no hace falta inventar un canal `c1` / gpio `0` para satisfacer a la consola.
 
 ### 11.2 Config que baja al Round
 
-Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesita nombres, themes, eje de swipe y gestos habilitados. Esos datos **sí** se envían al aparato (al revés del `switches.label`, que no viaja).
+Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesita nombres, themes, eje de swipe, `dimTarget` y recetas (con listas y `name` de escena). Esos datos **sí** se envían al aparato (al revés del `switches.label`, que no viaja).
 
 ```text
 {
@@ -412,13 +428,13 @@ Hoy: `{ rev, recipes[] }` con `channelId`. Eso **no basta**: el círculo necesit
       id: "p1",
       name: "Living",
       theme: "ember",
-      gestures: { tap: true, double_tap: true }
+      dimTarget: { rtype: "grouped_light", rid: "living-gl-…" }
     },
     {
       id: "p2",
       name: "Patio",
       theme: "meadow",
-      gestures: { tap: true, double_tap: true }
+      dimTarget: { rtype: "grouped_light", rid: "patio-gl-…" }
     }
   ],
   recipes: [
@@ -467,7 +483,7 @@ Necesario:
 
 - Discriminar producto en `switches` (`product` text: `simple` | `round`).
 - Ajustes de Round en el switch: `page_swipe_axis`.
-- Tabla (o JSON) de **páginas** por switch: `id`, `name`, `sort_order`, `theme`, flags de gestos.
+- Tabla (o JSON) de **páginas** por switch: `id`, `name`, `sort_order`, `theme`, `dimTarget` (nullable).
 - Recetas del Round ligadas a `page_id` + `event` (`short` | `double_click`).
 - `recall_scene` en Round guarda **varios** `rid` ordenados (tabla hija o JSON), no un solo `target_rid`.
 - Recetas del simple-switch se quedan como están (un `rid` por receta; no rotan).
@@ -481,7 +497,7 @@ Límites que el server valida:
 | Páginas por Round | 1–6 | Puntos + NVS + uso de pared |
 | Nombre | 1–12 caracteres | Ancho del disco a size 2 |
 | Theme | id del set cerrado | RGB565 predecible |
-| Gestos | ≥ 1 habilitado | Página inútil si no hay ninguno |
+| Gestos | tap y doble siempre listos; receta opcional | Vacío = no-op; sin checkbox extra |
 | Recetas | ≤ 12 (6×2) | Cabe en NVS; firmware puede dejar `kMaxRecipes` en 16 o bajar |
 | Escenas por lista | 1–8 | Ciclo usable en pared; JSON/NVS |
 | Grupos en una lista | 1 (mismo room o zona) | Clip v2 aplica la escena a su grupo |
@@ -491,7 +507,7 @@ Límites que el server valida:
 ## 13. Firmware (Round)
 
 - Poll igual: sin recetas/páginas ~1 min; con config al boot y cada 1 h. El dedo no espera.
-- NVS guarda `rev`, eje, páginas (id, nombre, theme, flags), recetas (listas de escenas con `rid` + `name`), índice de página activa, último `rid` de escena por gesto (caché).
+- NVS guarda `rev`, eje, páginas (id, nombre, theme, `dimTarget`), recetas (listas de escenas con `rid` + `name` ASCII), índice de página activa, último `rid` de escena por gesto (caché).
 - Rotar escenas: GET de estado al Bridge + PUT de la siguiente (LAN). No llama a la consola.
 - Al cambiar de página: pintar de inmediato, GET de estado Hue del nuevo destino (on/brillo) en background. Un swipe no se bloquea a la red.
 - Si el `pageId` de la receta ya no existe: ignorar. Si el índice activo apunta a una página borrada: ir a la primera.
@@ -530,7 +546,7 @@ El S3 **tiene espacio de sobra** en flash y RAM. No hace falta framebuffer ni PS
 Aparatos Round que ya registraron `c1` + receta `short`:
 
 1. La consola los marca `product: round`.
-2. Crea una página `p1`, nombre `Page 1` (editable), theme default, tap on, doble off.
+2. Crea una página `p1`, nombre `Page 1` (editable), theme `ember`, tap y doble vacíos salvo la receta migrada, `dimTarget` según §8.2.
 3. Copia la receta `c1`/`short` a `p1`/`short`. Si era `recall_scene` de un `rid`, queda una lista de un elemento.
 4. El siguiente poll con `rev` nuevo baja el objeto de §11.2.
 5. Firmware viejo (sin parser de `pages`): **no se le puede mandar solo recipes con `pageId`**. Hasta flashear, o bien se dual-escribe `{ channelId: "c1", … }` (compat) o el aparato se queda con NVS viejo hasta el flash. v1 asume **flash de firmware junto con el corte de consola**. No hay requisito de dual-stack largo.
@@ -566,10 +582,10 @@ Estas no son código. Son el default si no se dice lo contrario.
 2. **Máximo 6 páginas.** El disco muestra puntos; 8 ya aprieta.
 3. **Nombre ≤ 12 caracteres**, size 2. Más largo → ellipsis.
 4. **Eje de swipe por aparato**, default horizontal.
-5. **Swipe left / up = siguiente** en la lista de la consola.
+5. **Swipe left = siguiente** (índice +1). Right = anterior. Vertical: up = siguiente, down = anterior.
 6. **Wrap** en el carrusel.
-7. **Última página activa** se recuerda en NVS.
-8. **Aro dimmea el target de tap** si es dimmable; si tap es lista de escenas, dimmea el `grouped_light` de ese grupo; si no, el primer gesto dimmable; si no, sin aro.
+7. **Última página activa** se recuerda en NVS. Un reboot vuelve a esa.
+8. **`dimTarget` en la página**, calculado por la consola al guardar (§8.2). El firmware no resuelve grupos. `null` → sin aro.
 9. **Sin fallback** `double_click` → otra receta en el círculo.
 10. **Themes = las 20 paletas del prototipo**, set cerrado. Picker = grid de diales redondos (como `docs/round-themes.html`). Una por página. Default `ember`. No es el theme CSS del sitio.
 11. **Sin hold en el círculo.** Off vive en `double_click`. El swipe se decide por desplazamiento, no por reloj. BOOT hold 3 s (re-pair) no cambia.
@@ -580,17 +596,19 @@ Estas no son código. Son el default si no se dice lo contrario.
 16. **Debajo del nombre de página, la escena activa** (size 1, ellipsis, o nada si no hay). El título sigue siendo la página. El poll manda `targets[].name`.
 17. **Puntos abajo = páginas.** Un punto por página, orden de consola. El lleno es la activa. Una página → sin puntos. Una fila dentro del disco interior: se achica gap, luego diámetro; nunca overflow ni dos filas.
 18. **Sin textos explicativos en Ready.** Nada de `Tap to toggle` ni `Drag ring to dim`. El disco no enseña gestos. Estados de sistema sí tienen una línea de estado.
+19. **Página nueva: tap y doble visibles y vacíos.** Se asigna en consola o se deja vacío. Sin checkbox de gesto. El tap espera doble solo si doble tiene receta.
+20. **Nombres en el círculo = ASCII.** Página y escena: tildes/ñ se pliegan (`Niños` → `Ninos`). Fuente built-in 5×7.
 
 ---
 
 ## 17. Preguntas abiertas
 
-Resolverlas antes de implementar. Los defaults de §16 valen si no hay respuesta.
+Ninguna. Cerradas:
 
-1. **Dirección del swipe.** ¿Left = siguiente (como un carrusel que empuja el contenido) o left = anterior (como pasar una página de libro)?
-2. **¿Página nueva nace con tap-only** (doble off) o con tap y doble visibles y vacíos?
-3. **¿Reboot vuelve a la última página** (propuesto) o siempre a la primera?
-4. **Nombres en español en el círculo.** Página y escena son del usuario / Hue. ¿Truncar UTF-8 (tildes) o restringir a ASCII para la fuente built-in?
+1. Swipe left = siguiente.
+2. Página nueva: tap y doble siempre asignables (vacíos al crear).
+3. Reboot vuelve a la última página.
+4. ASCII en el círculo.
 
 ---
 

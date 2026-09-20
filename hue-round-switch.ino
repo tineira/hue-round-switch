@@ -1,13 +1,14 @@
 #include <WiFi.h>
 #include "config.h"
 
-#define FIRMWARE_VERSION "0.3.0"
+#define FIRMWARE_VERSION "0.4.0"
 
 String gHueBridgeIp;
 String gHueAppKey;
 
 #include "hue.h"
 #include "hue_discover.h"
+#include "pages.h"
 #include "recipes.h"
 #include "display.h"
 #include "touch.h"
@@ -55,13 +56,14 @@ static void afterWifiUp() {
   gHueReady = true;
   Serial.printf("Using Bridge %s id=%s\n", gHueBridgeIp.c_str(), gHueBridgeId.c_str());
   recipesBindBridge(gHueBridgeId);
+  pagesBindBridge(gHueBridgeId);
   consoleBootSync();
   uiSet(uiFromRecipes());
   if (gUi == UI_READY) {
     uiLoadLevel();
   }
   uiPaint();
-  Serial.println("tap c1 = recipe. ring = dim. BOOT hold 3s = re-pair.");
+  Serial.println("tap/double = recipe. swipe = page. ring = dim. BOOT hold 3s = re-pair.");
 }
 
 void setup() {
@@ -76,6 +78,7 @@ void setup() {
   Serial.printf("firmware %s  SSID: %s\n", FIRMWARE_VERSION, WIFI_SSID);
 
   recipesLoad();
+  pagesLoad();
   bootBegin();
   displayBegin();
   touchBegin();
@@ -129,7 +132,7 @@ void loop() {
   bootPoll(now);
   if (gHueReady) {
     uiPollTouch(now);
-    if (!gDimDragging) {
+    if (!gDimDragging && !gTouchDown && !gTapWaitDouble) {
       consolePollTick(now);
     }
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {
