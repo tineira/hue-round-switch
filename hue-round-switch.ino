@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include "config.h"
 
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.0"
 
 String gHueBridgeIp;
 String gHueAppKey;

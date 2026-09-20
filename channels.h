@@ -55,7 +55,7 @@ inline void channelsAppendJson(String &out) {
   out += ']';
 }
 
-inline bool recipeFire(const char *channelId, const char *event) {
+inline bool recipeFire(const char *channelId, const char *event, bool *nowOn = nullptr) {
   const HueRecipe *r = recipesFind(channelId, event);
   if (!r && strcmp(event, "double_click") == 0) {
     Serial.printf("%s double_click: no recipe, fallback on\n", channelId);
@@ -70,7 +70,7 @@ inline bool recipeFire(const char *channelId, const char *event) {
     return false;
   }
   Serial.printf("%s %s -> %s %s/%s\n", channelId, event, r->action, r->rtype, r->rid);
-  if (!hueExecute(r->action, r->rtype, r->rid)) {
+  if (!hueExecute(r->action, r->rtype, r->rid, nowOn)) {
     Serial.println("Hue action failed");
     return false;
   }

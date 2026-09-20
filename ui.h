@@ -32,6 +32,8 @@ static const uint16_t kColInk = 0xEF7D;
 static const uint16_t kColMute = 0x7BEF;
 static const uint16_t kColAmber = 0xFCE0;
 static const uint16_t kColAmberDim = 0xA240;
+static const uint16_t kColOffFill = 0x2104;
+static const uint16_t kColOffInner = 0x3186;
 static const uint16_t kColRed = 0xF800;
 static const uint16_t kColYellow = 0xFFE0;
 
@@ -51,6 +53,9 @@ inline bool gBriLocal = false;
 inline char gBriRid[40] = {0};
 inline int gBriShown = -1;
 inline int gBriLastSent = -1;
+inline bool gLightOn = true;
+inline bool gLightOnKnown = false;
+inline unsigned long gLightPollMs = 0;
 inline unsigned long gTouchLastPtMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
 inline int16_t gTouchX = -1;
@@ -76,6 +81,19 @@ inline const HueRecipe *uiDimRecipe() {
   }
   return r;
 }
+
+inline const HueRecipe *uiStateRecipe() {
+  const HueRecipe *r = uiC1Recipe();
+  if (!r || !r->rtype[0] || !r->rid[0]) {
+    return nullptr;
+  }
+  if (strcmp(r->rtype, "light") == 0 || strcmp(r->rtype, "grouped_light") == 0) {
+    return r;
+  }
+  return nullptr;
+}
+
+inline bool uiLightLit() { return !gLightOnKnown || gLightOn; }
 
 inline float uiClockDeg(int16_t x, int16_t y) {
   const float deg = atan2f((float)(x - kScreenCx), (float)(kScreenCy - y)) * (180.0f / 3.14159265f);
@@ -142,10 +160,11 @@ inline void uiDrawLevel() {
     return;
   }
   const int pct = gBriKnown ? gBriPct : 0;
+  const uint16_t fillCol = uiLightLit() ? kColAmber : 0x5AEB;
   if (gBriShown < 0) {
     uiFillArcSpan(kLevelStartDeg, kLevelStartDeg + kLevelSpanDeg, 0x3186);
     if (pct > 0) {
-      uiFillArcSpan(kLevelStartDeg, uiLevelAngle(pct), kColAmber);
+      uiFillArcSpan(kLevelStartDeg, uiLevelAngle(pct), fillCol);
     }
     gBriShown = pct;
     return;
@@ -161,7 +180,7 @@ inline void uiDrawLevel() {
     return;
   }
   if (pct > gBriShown) {
-    uiFillArcSpan(uiLevelAngle(gBriShown), uiLevelAngle(pct), kColAmber);
+    uiFillArcSpan(uiLevelAngle(gBriShown), uiLevelAngle(pct), fillCol);
   } else {
     uiFillArcSpan(uiLevelAngle(pct), uiLevelAngle(gBriShown), 0x3186);
   }
@@ -193,6 +212,9 @@ inline uint16_t uiRingColor(UiScreen s, unsigned long now) {
     case UI_EMPTY:
       return kColMute;
     case UI_READY:
+      if (!uiLightLit()) {
+        return gUiPressed ? kColMute : 0x4208;
+      }
       return gUiPressed ? kColInk : kColAmber;
     default:
       return kColMute;
@@ -213,7 +235,10 @@ inline void uiDrawRings(unsigned long now) {
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 2, kColInk);
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 3, kColInk);
   } else {
-    const uint16_t rest = (gUi == UI_READY || gUi == UI_BUSY) ? kColAmberDim : kColBg;
+    uint16_t rest = kColBg;
+    if (gUi == UI_READY || gUi == UI_BUSY) {
+      rest = uiLightLit() ? kColAmberDim : kColOffInner;
+    }
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 2, rest);
     gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 3, rest);
   }
@@ -238,6 +263,23 @@ inline const char *uiActionLine(const HueRecipe *r) {
   return "Tap";
 }
 
+inline void uiDrawButton() {
+  if (!gDisplayOk || !gLcd || gUi != UI_READY) {
+    return;
+  }
+  const bool lit = uiLightLit();
+  const uint16_t fill = lit ? kColAmberDim : kColOffFill;
+  const uint16_t inner = gUiPressed ? (lit ? kColAmber : kColOffInner) : fill;
+  gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, fill);
+  gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius - (gUiPressed ? 4 : 6), inner);
+  uiDrawRings(millis());
+  displayTextCenter("1", 92, 4, lit ? kColInk : kColMute);
+  displayTextCenter(uiActionLine(uiC1Recipe()), 148, 1, lit ? kColInk : kColMute);
+  if (uiDimRecipe()) {
+    displayTextCenter("Drag ring to dim", 166, 1, kColMute);
+  }
+}
+
 inline void uiPaint() {
   if (!gDisplayOk || !gLcd) {
     gUiPainted = gUi;
@@ -247,21 +289,16 @@ inline void uiPaint() {
   const unsigned long now = millis();
   gLcd->fillScreen(kColBg);
 
-  const uint16_t ring = uiRingColor(gUi, now);
-  gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, gUi == UI_READY || gUi == UI_BUSY ? kColAmberDim : kColBg);
-  if (gUi == UI_READY && gUiPressed) {
-    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius - 4, kColAmber);
-  } else if (gUi == UI_READY || gUi == UI_BUSY) {
-    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius - 6, kColAmberDim);
-  }
-  gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius, ring);
-  gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 1, ring);
-  if (!(gUi == UI_READY && uiDimRecipe())) {
+  if (gUi == UI_READY) {
+    uiDrawButton();
+  } else {
+    const uint16_t ring = uiRingColor(gUi, now);
+    gLcd->fillCircle(kScreenCx, kScreenCy, kBtnRadius, kColBg);
+    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius, ring);
+    gLcd->drawCircle(kScreenCx, kScreenCy, kBtnRadius - 1, ring);
     gLcd->drawCircle(kScreenCx, kScreenCy, kRingOuter, ring);
+    displayTextCenter("1", 92, 4, kColMute);
   }
-
-  displayTextCenter("1", 92, 4,
-                    gUi == UI_EMPTY || gUi == UI_WIFI || gUi == UI_BOOT || gUi == UI_LOADING ? kColMute : kColInk);
 
   const char *line = "";
   switch (gUi) {
@@ -285,7 +322,6 @@ inline void uiPaint() {
       line = "Assign in console";
       break;
     case UI_READY:
-      line = uiActionLine(uiC1Recipe());
       break;
     case UI_BUSY:
       line = "...";
@@ -294,7 +330,9 @@ inline void uiPaint() {
       line = "Hue error";
       break;
   }
-  displayTextCenter(line, 148, 1, kColInk);
+  if (gUi != UI_READY) {
+    displayTextCenter(line, 148, 1, kColInk);
+  }
 
   if (gUi == UI_WIFI_FAIL) {
     displayTextCenter("Plug the antenna", 168, 1, kColMute);
@@ -306,8 +344,6 @@ inline void uiPaint() {
     displayTextCenter("Channel 1", 166, 1, kColMute);
   } else if (gUi == UI_NO_BRIDGE) {
     displayTextCenter("same LAN as Bridge", 166, 1, kColMute);
-  } else if (gUi == UI_READY && uiDimRecipe()) {
-    displayTextCenter("Drag ring to dim", 166, 1, kColMute);
   }
 
   if (gUi == UI_READY) {
@@ -321,27 +357,55 @@ inline void uiPaint() {
 
 inline bool uiNeedsPulse(UiScreen s) { return s == UI_PAIRING || s == UI_LOADING; }
 
-inline void uiLoadLevel() {
-  const HueRecipe *r = uiDimRecipe();
+inline bool uiRefreshState(bool force) {
+  const HueRecipe *r = uiStateRecipe();
   if (!r) {
+    gLightOnKnown = false;
     gBriKnown = false;
-    gBriLocal = false;
     gBriRid[0] = 0;
-    return;
+    return false;
   }
-  if (gBriLocal) {
-    return;
+  if (!force && gBriLocal && gLightOnKnown && gBriRid[0] && strcmp(gBriRid, r->rid) == 0) {
+    return false;
   }
-  if (gBriKnown && gBriRid[0] && strcmp(gBriRid, r->rid) == 0) {
-    return;
-  }
-  int pct = 50;
-  if (!hueGetBrightness(r->rtype, r->rid, &pct)) {
-    return;
+  bool on = gLightOn;
+  int pct = gBriPct;
+  if (!hueGetLightState(r->rtype, r->rid, &on, uiDimRecipe() ? &pct : nullptr)) {
+    return false;
   }
   recipeCopyField(gBriRid, sizeof(gBriRid), r->rid);
-  gBriPct = uiClampPct(pct);
-  gBriKnown = true;
+  const bool onChanged = !gLightOnKnown || on != gLightOn;
+  const bool briChanged = uiDimRecipe() && (!gBriKnown || uiClampPct(pct) != gBriPct);
+  gLightOn = on;
+  gLightOnKnown = true;
+  if (uiDimRecipe()) {
+    gBriPct = uiClampPct(pct);
+    gBriKnown = true;
+  }
+  gBriLocal = false;
+  return onChanged || briChanged;
+}
+
+inline void uiLoadLevel() { uiRefreshState(false); }
+
+inline void uiSyncFace() {
+  if (gUi != UI_READY) {
+    return;
+  }
+  uiDrawButton();
+  if (uiDimRecipe()) {
+    gBriShown = -1;
+    uiDrawLevel();
+  }
+}
+
+inline void uiSetLightOn(bool on) {
+  const bool changed = !gLightOnKnown || on != gLightOn;
+  gLightOn = on;
+  gLightOnKnown = true;
+  if (changed) {
+    uiSyncFace();
+  }
 }
 
 inline void uiTick(unsigned long now) {
@@ -362,6 +426,12 @@ inline void uiTick(unsigned long now) {
     uiDrawRings(now);
     gUiPulseMs = now;
   }
+  if (gUi == UI_READY && !gTouchDown && now - gLightPollMs >= 20000) {
+    gLightPollMs = now;
+    if (uiRefreshState(true)) {
+      uiSyncFace();
+    }
+  }
 }
 
 inline bool uiDimPut(int pct) {
@@ -380,6 +450,7 @@ inline bool uiDimPut(int pct) {
   gBriPct = pct;
   gBriKnown = true;
   gBriLocal = true;
+  uiSetLightOn(true);
   return true;
 }
 
@@ -395,6 +466,12 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   gBriPct = pct;
   gBriKnown = true;
   gBriLocal = true;
+  if (!uiLightLit()) {
+    gLightOn = true;
+    gLightOnKnown = true;
+    uiDrawButton();
+    gBriShown = -1;
+  }
   if (pct != gBriShown) {
     uiDrawLevel();
   }
@@ -410,13 +487,15 @@ inline bool uiOnTap() {
     uiPaint();
     return false;
   }
-  const bool ok = recipeFire("c1", "short");
+  bool on = gLightOn;
+  const bool ok = recipeFire("c1", "short", &on);
   if (!ok) {
     gUiPressed = false;
     uiSet(UI_ERROR);
     uiPaint();
     return false;
   }
+  uiSetLightOn(on);
   return true;
 }
 
@@ -428,12 +507,22 @@ inline void uiTouchEnd(unsigned long now) {
     Serial.printf("dim %d%%\n", gBriPct);
     gDimDragging = false;
     gDimHavePct = false;
+    if (gUi == UI_READY) {
+      uiDrawButton();
+      gBriShown = -1;
+      uiDrawLevel();
+    }
   }
   const bool wasPressed = gUiPressed;
   gTouchDown = false;
   gUiPressed = false;
   gTouchIgnoreUntil = now + 40;
-  if (wasPressed && (gUi == UI_READY || gUi == UI_EMPTY)) {
+  if (gUi == UI_READY) {
+    uiDrawButton();
+    if (uiDimRecipe()) {
+      uiDrawLevel();
+    }
+  } else if (wasPressed && gUi == UI_EMPTY) {
     uiDrawRings(now);
   }
 }

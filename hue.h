@@ -143,23 +143,31 @@ inline bool hueRecallScene(const char *rid) {
   return true;
 }
 
-inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !pct) {
+inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *pct) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
     return false;
   }
   String body;
   const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true, 4000);
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Hue GET dim %s/%s %d\n", rtype, rid, code);
+    Serial.printf("Hue GET state %s/%s %d\n", rtype, rid, code);
     return false;
   }
-  if (!jsonHueBrightness(body.c_str(), pct)) {
-    return false;
+  bool parsed = false;
+  if (on && jsonHueOn(body.c_str(), on)) {
+    parsed = true;
   }
-  if (*pct < 1) {
-    *pct = 1;
+  if (pct && jsonHueBrightness(body.c_str(), pct)) {
+    if (*pct < 1) {
+      *pct = 1;
+    }
+    parsed = true;
   }
-  return true;
+  return parsed;
+}
+
+inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
+  return hueGetLightState(rtype, rid, nullptr, pct);
 }
 
 inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
@@ -198,21 +206,39 @@ inline bool hueToggle(const char *rtype, const char *rid, bool *nowOn) {
   return true;
 }
 
-inline bool hueExecute(const char *action, const char *rtype, const char *rid) {
+inline bool hueExecute(const char *action, const char *rtype, const char *rid, bool *nowOn = nullptr) {
   if (!action || !rtype || !rid || !rid[0]) {
     return false;
   }
   if (strcmp(action, "on") == 0) {
-    return hueSetOn(rtype, rid, true);
+    if (!hueSetOn(rtype, rid, true)) {
+      return false;
+    }
+    if (nowOn) {
+      *nowOn = true;
+    }
+    return true;
   }
   if (strcmp(action, "off") == 0) {
-    return hueSetOn(rtype, rid, false);
+    if (!hueSetOn(rtype, rid, false)) {
+      return false;
+    }
+    if (nowOn) {
+      *nowOn = false;
+    }
+    return true;
   }
   if (strcmp(action, "recall_scene") == 0) {
-    return hueRecallScene(rid);
+    if (!hueRecallScene(rid)) {
+      return false;
+    }
+    if (nowOn) {
+      *nowOn = true;
+    }
+    return true;
   }
   if (strcmp(action, "toggle") == 0) {
-    return hueToggle(rtype, rid, nullptr);
+    return hueToggle(rtype, rid, nowOn);
   }
   Serial.printf("Hue execute: unknown action %s\n", action);
   return false;
