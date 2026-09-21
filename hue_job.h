@@ -53,6 +53,8 @@ struct HueJobResult {
   bool haveScene;
   bool sceneHave;
   char sceneName[25];
+  bool haveLastScene;
+  char lastSceneRid[40];
 };
 
 inline portMUX_TYPE gHueJobMux = portMUX_INITIALIZER_UNLOCKED;
@@ -190,7 +192,6 @@ inline HueArmResult hueJobArmRecipe(const char *pageId, const char *event, bool 
       return HUE_ARM_ERR;
     }
     recipeCopyField(job.rid, sizeof(job.rid), r->scenes[idx].rid);
-    pagesSetLastSceneRid(r->scenes[idx].rid);
     if (nowOn) {
       *nowOn = true;
     }
@@ -383,11 +384,43 @@ inline void hueJobReadPageDim(const HueJob &job, HueJobResult *out) {
 
 inline bool hueJobRunRecipe(const HueJob &job, HueJobResult *out) {
   if (strcmp(job.action, "recall_scene") == 0) {
-    if (!hueRecallScene(job.rid)) {
+    if (job.sceneCount == 0) {
       return false;
     }
-    if (out) {
-      out->ok = true;
+    uint8_t start = 0;
+    for (uint8_t i = 0; i < job.sceneCount; i++) {
+      if (job.rid[0] && strcmp(job.scenes[i].rid, job.rid) == 0) {
+        start = i;
+        break;
+      }
+    }
+    bool ok = false;
+    for (uint8_t n = 0; n < job.sceneCount; n++) {
+      const uint8_t i = static_cast<uint8_t>((start + n) % job.sceneCount);
+      if (!job.scenes[i].rid[0]) {
+        continue;
+      }
+      const int code = hueRecallSceneHttp(job.scenes[i].rid);
+      if (code == HTTP_CODE_NOT_FOUND) {
+        LOG("Hue recall 404 skip %s\n", job.scenes[i].rid);
+        continue;
+      }
+      if (code != HTTP_CODE_OK) {
+        return false;
+      }
+      ok = true;
+      if (out) {
+        out->ok = true;
+        out->haveLastScene = true;
+        recipeCopyField(out->lastSceneRid, sizeof(out->lastSceneRid), job.scenes[i].rid);
+        recipeCopyField(out->sceneName, sizeof(out->sceneName), job.scenes[i].name);
+        out->haveScene = true;
+        out->sceneHave = out->sceneName[0] != 0;
+      }
+      break;
+    }
+    if (!ok) {
+      return false;
     }
     if (hueJobStale(job.gen)) {
       return true;

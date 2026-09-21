@@ -6,7 +6,7 @@ La consola (`hue-switch-console`) y `hue-simple-switch` están **fuera de alcanc
 
 Cierra el hueco de `docs/pages-requirements.md` §8.1 y §13: el GET+PUT al Bridge **sí ocurre**, pero **el disco no se congela** mientras tanto.
 
-**Estado:** requisitos vigentes. Firmware **0.5.8** saca GET/PUT de receta, dimmer y refresh del `loop()` (`hue_job.h`: un slot last-wins en tarea propia). `hueHttp()` sigue síncrono, pero solo en esa tarea. Pairing / discover / poll de consola siguen en el loop. `pages-requirements.md` §8.1 / §13 / decisión 23 apuntan aquí.
+**Estado:** implementado. Firmware **0.5.8** saca GET/PUT de receta, dimmer y refresh del `loop()` (`hue_job.h`: un slot last-wins en tarea propia). Firmware **0.5.14+** saca snapshot / register / poll de consola del loop de toque. `hueHttp()` sigue síncrono, pero en esas tareas, no en Ready. Pairing / discover / re-pair BOOT 3 s pueden seguir en el loop. `pages-requirements.md` §8.1 / §13 / decisión 23 apuntan aquí.
 
 ---
 
@@ -26,7 +26,7 @@ Eso es lo que hacen un Hue dimmer / Tap Dial, un Lutron Maestro y HomeKit: el co
 
 El usuario está de pie, a un brazo, tocando un círculo de 39 mm. Un tap debe sentirse como un interruptor de pared, no como un formulario que espera 201.
 
-Hoy (0.5.7) no es así:
+Antes de 0.5.8 no era así:
 
 1. `hueHttp()` sigue siendo GET/PUT síncrono en el `loop()` (timeouts 2,5–8 s). `recipeFire()` y `uiDimPut()` salen de `uiPollTouch()` / `uiTick()`. No hay cola ni tarea Hue.
 2. CHSC6X no entrega IDs de gesto. Tap, doble (`kDoubleTapMs` = 350, `gSecondTap` al segundo down, fire al lift), swipe (≥40 px) y lift se infieren en `uiPollTouch` / `uiTick`. Si el loop está dentro de HTTP, esos FSM **no corren**: el siguiente toque se pierde.
@@ -36,7 +36,7 @@ Hoy (0.5.7) no es así:
 6. `gOnHueWait` bombea `uiTick` solo en el wait de **pairing** (`hue_discover.h`), no en GET/PUT de receta. `uiTick` no llama `uiPollTouch`. No cuenta como “Ready vivo”.
 7. Tras un swipe, `uiOnPageChanged` pinta ya y deja `gNeedHueState`; el GET de on/brillo/escena corre en `uiTick` cuando no hay dedo. Ese GET **sí** bloquea el loop al soltar.
 
-El spec de páginas ya exige disco vivo (`pages-requirements.md` §8.1, §13, decisión 23). El código aún no.
+El spec de páginas exige disco vivo (`pages-requirements.md` §8.1, §13, decisión 23). Receta / aro / refresh de página salieron del loop en 0.5.8; snapshot / register / poll de consola en 0.5.14.
 
 ---
 

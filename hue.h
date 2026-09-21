@@ -140,21 +140,22 @@ inline bool hueSceneActive(const char *rid, bool *active) {
   return jsonHueSceneActive(body.c_str(), active);
 }
 
-inline bool hueRecallScene(const char *rid) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid) {
+inline int hueRecallSceneHttp(const char *rid) {
+  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid || !rid[0]) {
     LOGLN("Hue recall: begin failed");
-    return false;
+    return -1;
   }
   String body;
   const int code =
       hueHttp(hueResourceUrl("scene", rid), "PUT", "{\"recall\":{\"action\":\"active\"}}", &body, true, true);
   LOG("Hue recall scene/%s %d\n", rid, code);
-  if (code != HTTP_CODE_OK) {
+  if (code != HTTP_CODE_OK && code != HTTP_CODE_NOT_FOUND) {
     LOGLN(body);
-    return false;
   }
-  return true;
+  return code;
 }
+
+inline bool hueRecallScene(const char *rid) { return hueRecallSceneHttp(rid) == HTTP_CODE_OK; }
 
 inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *pct) {
   if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !rid[0]) {

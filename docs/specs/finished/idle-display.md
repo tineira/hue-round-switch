@@ -4,7 +4,7 @@ Documento de **requisitos de producto**. Cubre `hue-round-switch` (firmware, cí
 
 No es un screensaver (reloj, widgets, animación). Es **reposo**: el disco se apaga cuando nadie lo toca, para gastar menos (luz de fondo, y en batería el resto) y no dejar un faro en la pared.
 
-**Estado:** requisitos, no implementado.
+**Estado:** implementado (firmware 0.5.11+, consola `screenTimeoutSec`). Spec archivado. No es un hueco de implementación.
 
 Alinea `docs/pages-requirements.md` §9.1 (ajuste del display), poll §11.2 y decisión 25.
 
@@ -36,7 +36,7 @@ Un interruptor de pared que dispara receta a ciegas, con el disco negro, cambia 
 | --- | --- |
 | Ready, nadie toca, pasan X s (X > 0) | Reposo: BL off, panel negro. Sin copy, sin `...`, sin reloj. |
 | Reposo, primer toque (cualquier zona, cualquier movimiento) | BL on, se pinta Ready de la **página activa** (la de NVS). Ese contacto **no** es receta ni swipe ni dimmer. Al soltar, el usuario ve dónde está. |
-| Ready despierto, tap / doble / aro / swipe | Como hoy (`input-during-hue.md`, fill partido, etc.). |
+| Ready despierto, tap / doble / aro / swipe | Como hoy (`input-during-hue.md` en esta carpeta, fill partido, etc.). |
 | Despierto y otra vez X s sin toque | Vuelve a reposo. |
 | X = 0 en consola | Nunca reposo (siempre on). |
 | Wi‑Fi, pairing, error, boot, loading | No entran en reposo. Hay que leer el mensaje. |

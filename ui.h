@@ -52,7 +52,7 @@ inline bool gBriLocal = false;
 inline char gBriRid[40] = {0};
 inline int gBriShown = -1;
 inline int gBriLastSent = -1;
-inline bool gLightOn = true;
+inline bool gLightOn = false;
 inline bool gLightOnKnown = false;
 inline bool gTapOn = false;
 inline bool gTapOnKnown = false;
@@ -88,7 +88,7 @@ inline bool uiLightLit() {
   if (uiSplitTwoLights()) {
     return (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
   }
-  return !gLightOnKnown || gLightOn;
+  return gLightOnKnown && gLightOn;
 }
 
 inline const PageTheme *uiTheme() {
@@ -493,108 +493,6 @@ inline void uiPaint() {
 
 inline bool uiNeedsPulse(UiScreen s) { return s == UI_PAIRING || s == UI_LOADING; }
 
-inline bool uiRefreshState(bool force) {
-  const Page *p = pagesActive();
-  const char *rtype = nullptr;
-  const char *rid = nullptr;
-  const bool dimRing = uiHasDim();
-  const bool lightsDim = p && p->dimMode == PAGE_DIM_LIGHTS && p->dimLightCount > 0;
-
-  if (p && p->dimMode == PAGE_DIM_GROUP && p->dimGroupRid[0]) {
-    rtype = "grouped_light";
-    rid = p->dimGroupRid;
-  } else if (lightsDim) {
-    rid = p->dimLights[0];
-  } else {
-    const HueRecipe *r = recipesFind(pagesActiveId(), "short");
-    if (r && r->rid[0] && (strcmp(r->rtype, "light") == 0 || strcmp(r->rtype, "grouped_light") == 0)) {
-      rtype = r->rtype;
-      rid = r->rid;
-    }
-  }
-  if (!rid || !rid[0]) {
-    gLightOnKnown = false;
-    gBriKnown = false;
-    gBriRid[0] = 0;
-    return false;
-  }
-  if (!force && gBriLocal && gLightOnKnown && gBriRid[0] && strcmp(gBriRid, rid) == 0) {
-    return false;
-  }
-
-  bool on = gLightOn;
-  int pct = gBriPct;
-  if (lightsDim) {
-    bool got = false;
-    bool anyOn = false;
-    int firstOnPct = 0;
-    int fallbackPct = pct;
-    for (uint8_t i = 0; i < p->dimLightCount && i < kMaxDimLights; i++) {
-      if (!p->dimLights[i][0]) {
-        continue;
-      }
-      bool lightOn = false;
-      int bri = 0;
-      if (!hueGetLightState("light", p->dimLights[i], &lightOn, dimRing ? &bri : nullptr)) {
-        continue;
-      }
-      got = true;
-      if (!anyOn) {
-        fallbackPct = bri;
-      }
-      if (lightOn && !anyOn) {
-        anyOn = true;
-        firstOnPct = bri;
-      }
-    }
-    if (!got) {
-      return false;
-    }
-    on = anyOn;
-    pct = anyOn ? firstOnPct : fallbackPct;
-  } else {
-    if (!rtype) {
-      gLightOnKnown = false;
-      gBriKnown = false;
-      gBriRid[0] = 0;
-      return false;
-    }
-    if (!hueGetLightState(rtype, rid, &on, dimRing ? &pct : nullptr)) {
-      return false;
-    }
-  }
-  recipeCopyField(gBriRid, sizeof(gBriRid), rid);
-  const bool onChanged = !gLightOnKnown || on != gLightOn;
-  const bool briChanged = dimRing && (!gBriKnown || uiClampPct(pct) != gBriPct);
-  gLightOn = on;
-  gLightOnKnown = true;
-  if (dimRing) {
-    gBriPct = uiClampPct(pct);
-    gBriKnown = true;
-  }
-  gBriLocal = false;
-  return onChanged || briChanged;
-}
-
-inline bool uiRefreshScene() {
-  gSceneHave = false;
-  gSceneName[0] = 0;
-  const HueRecipe *r = recipesFindScene(pagesActiveId());
-  if (!r) {
-    return false;
-  }
-  if (gLightOnKnown && !gLightOn) {
-    return true;
-  }
-  const int idx = recipeFindActiveScene(r);
-  if (idx < 0) {
-    return true;
-  }
-  recipeCopyField(gSceneName, sizeof(gSceneName), r->scenes[idx].name);
-  gSceneHave = gSceneName[0] != 0;
-  return true;
-}
-
 inline void uiApplyLastSceneName() {
   gSceneHave = false;
   gSceneName[0] = 0;
@@ -720,6 +618,16 @@ inline void uiHueJobPoll() {
       }
       return;
     }
+    if (r.haveLastScene) {
+      pagesSetLastSceneRid(r.lastSceneRid);
+    }
+    if (r.haveScene) {
+      gSceneHave = r.sceneHave;
+      recipeCopyField(gSceneName, sizeof(gSceneName), r.sceneName);
+      if (!gScreenIdle) {
+        uiSyncFace();
+      }
+    }
     if (r.haveBri && uiHasDim() && !gDimDragging) {
       const int pct = uiClampPct(r.pct);
       gBriPct = pct;
@@ -745,6 +653,7 @@ inline void uiHueJobPoll() {
 
 inline void uiOnPageChanged() {
   gUiPressed = false;
+  gLightOn = false;
   gLightOnKnown = false;
   gTapOn = false;
   gTapOnKnown = false;
@@ -775,7 +684,7 @@ inline bool uiFireEvent(const char *event) {
     return false;
   }
   const bool split = uiSplitTwoLights();
-  bool on = gLightOn;
+  bool on = gLightOnKnown && gLightOn;
   if (split) {
     if (event && strcmp(event, "double_click") == 0) {
       on = gDblOnKnown && gDblOn;
