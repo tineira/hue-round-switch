@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.18"
+#define FIRMWARE_VERSION "0.5.19"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -43,14 +43,27 @@ static void wifiBeginKnown() {
   }
 }
 
+static void usbPump(unsigned long ms) {
+  const unsigned long start = millis();
+  usbPoll();
+  while (millis() - start < ms) {
+    delay(10);
+    usbPoll();
+  }
+}
+
 static bool wifiWait(unsigned long maxMs) {
   const unsigned long start = millis();
   LOGS("WiFi");
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < maxMs) {
-    delay(250);
-    LOGS(".");
     usbPoll();
     uiTick(millis());
+    if (usbWifiBusy()) {
+      LOGLN("");
+      return false;
+    }
+    delay(10);
+    LOGS(".");
   }
   LOGLN("");
   return WiFi.status() == WL_CONNECTED;
@@ -95,8 +108,9 @@ static void afterWifiUp() {
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+  usbPoll();
 #if SERIAL_DEBUG
-  delay(200);
+  usbPump(200);
 #endif
 
   pinMode(LED_BUILTIN, OUTPUT);
@@ -113,10 +127,11 @@ void setup() {
   touchBegin();
   hueJobBegin();
   consoleJobBegin();
+  usbPoll();
 
   uiSet(UI_BOOT);
   uiPaint();
-  delay(1000);
+  usbPump(1000);
 
   uiSet(UI_WIFI);
   uiPaint();
@@ -125,6 +140,14 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   gWifiLastTryMs = millis();
+
+  // Web Serial DTR-resets the S3; Scan/ping can arrive during the splash.
+  // Do not WiFi.begin over an Improv scan, and keep usbPoll alive if STA fails.
+  if (usbWifiBusy()) {
+    uiSet(UI_WIFI_FAIL);
+    uiPaint();
+    return;
+  }
 
   if (wifiHasArduinoCreds()) {
     WiFi.begin();
@@ -137,7 +160,9 @@ void setup() {
   }
 
   if (!wifiWait(15000)) {
-    LOG("WiFi failed, status=%d (S3 needs the U.FL antenna)\n", (int)WiFi.status());
+    if (!usbWifiBusy()) {
+      LOG("WiFi failed, status=%d (S3 needs the U.FL antenna)\n", (int)WiFi.status());
+    }
     uiSet(UI_WIFI_FAIL);
     uiPaint();
     return;
