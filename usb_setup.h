@@ -78,6 +78,7 @@ inline void improvSend(uint8_t type, const uint8_t *data, uint8_t len) {
   }
   pkt[n] = (uint8_t)(sum & 0xFF);
   pkt[n + 1] = '\n';
+  // Sin Serial.flush(): en HWCDC puede colgar el TX hasta que el host lea.
   Serial.write(pkt, n + 2);
 }
 
@@ -115,6 +116,9 @@ inline uint8_t improvCurrentState() {
   }
   return IMPROV_ST_READY;
 }
+
+// Spec: Current State is written to listening clients (no RPC required).
+inline void improvHello() { improvSendState(improvCurrentState()); }
 
 inline void improvSendInfo() {
   const char *strs[4] = {

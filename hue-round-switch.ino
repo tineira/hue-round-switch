@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.19"
+#define FIRMWARE_VERSION "0.5.20"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -108,10 +108,10 @@ static void afterWifiUp() {
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+  improvHello();
   usbPoll();
-#if SERIAL_DEBUG
   usbPump(200);
-#endif
+  improvHello();
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
@@ -123,6 +123,7 @@ void setup() {
   recipesLoad();
   pagesLoad();
   bootBegin();
+  usbPoll();
   displayBegin();
   touchBegin();
   hueJobBegin();
