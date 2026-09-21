@@ -9,7 +9,7 @@
 
 static const uint8_t kImprovMagic[6] = {'I', 'M', 'P', 'R', 'O', 'V'};
 static const uint8_t kImprovVer = 1;
-static const unsigned long kImprovByteMs = 100;
+static const unsigned long kImprovByteMs = 500;
 static const unsigned long kImprovConnectMs = 30000UL;
 
 enum {
@@ -133,6 +133,7 @@ inline void improvStartScan() {
   WiFi.scanNetworks(true);
   gImprovScan = true;
   gImprovScanAt = millis();
+  improvSendState(improvCurrentState());
 }
 
 inline void improvPollScan() {
