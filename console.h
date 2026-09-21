@@ -26,6 +26,15 @@ inline bool gConsoleRegistered = false;
 inline unsigned long gConsoleLastPollMs = 0;
 inline bool gConsolePolledBoot = false;
 
+// Snapshot/register/GET config en tarea propia. Ready no espera 4×20 s.
+inline portMUX_TYPE gConsoleMux = portMUX_INITIALIZER_UNLOCKED;
+inline bool gConsolePending = false;
+inline bool gConsoleWorkerBusy = false;
+inline bool gConsoleDoRegister = false;
+inline TaskHandle_t gConsoleTask = nullptr;
+inline String gConsoleConfigBody;
+inline bool gConsoleConfigReady = false;
+
 inline bool consoleConfigured() {
   const char *url = CONSOLE_URL;
   const char *tok = CONSOLE_TOKEN;
@@ -88,6 +97,25 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
   return code;
 }
 
+inline bool consoleJobBusy() {
+  portENTER_CRITICAL(&gConsoleMux);
+  const bool busy = gConsolePending || gConsoleWorkerBusy;
+  portEXIT_CRITICAL(&gConsoleMux);
+  return busy;
+}
+
+inline void consoleJobPost(bool doRegister) {
+  portENTER_CRITICAL(&gConsoleMux);
+  if (doRegister) {
+    gConsoleDoRegister = true;
+  }
+  gConsolePending = true;
+  portEXIT_CRITICAL(&gConsoleMux);
+  if (gConsoleTask) {
+    xTaskNotifyGive(gConsoleTask);
+  }
+}
+
 inline bool consoleRegister() {
   if (!consoleConfigured()) {
     return false;
@@ -98,7 +126,10 @@ inline bool consoleRegister() {
   }
 
   String lights, rooms, scenes;
-  hueBuildSnapshot(&lights, &rooms, &scenes);
+  if (!hueBuildSnapshot(&lights, &rooms, &scenes)) {
+    LOGLN("console register skipped: Hue snapshot failed — last good snapshot kept");
+    return false;
+  }
 
   String payload;
   payload.reserve(lights.length() + rooms.length() + scenes.length() + 256);
@@ -132,7 +163,7 @@ inline bool consoleRegister() {
   return true;
 }
 
-inline void consoleFetchConfig() {
+inline void consoleFetchConfigHttp() {
   if (!consoleConfigured()) {
     return;
   }
@@ -150,26 +181,34 @@ inline void consoleFetchConfig() {
     }
     return;
   }
+  gConsoleConfigBody = body;
+  gConsoleConfigReady = true;
+}
 
+inline void consoleApplyConfig(const char *body) {
+  if (!body) {
+    return;
+  }
   const uint32_t localRev = gRecipeRev;
-  const int remoteRev = jsonGetInt(body.c_str(), "rev", -1);
+  const int remoteRev = jsonGetInt(body, "rev", -1);
   if (remoteRev < 0) {
     LOGLN("console config missing rev");
     return;
   }
-  if (localRev >= static_cast<uint32_t>(remoteRev)) {
+  const bool force = gRecipesBidReset;
+  if (!force && localRev >= static_cast<uint32_t>(remoteRev)) {
     LOG("console rev %u local %u — keep NVS\n", remoteRev, localRev);
-    pagesFillDimFromRecipes();
-    if (pagesParseTimeout(body.c_str())) {
+    if (pagesParseTimeout(body)) {
       pagesSaveTimeout();
       LOG("console timeout %u (rev unchanged)\n", gScreenTimeoutSec);
     }
     return;
   }
+  gRecipesBidReset = false;
 
   // No copiar recetas/páginas en el stack: HueRecipe×16 ~10 KB y loopTask son 8 KB.
   uint32_t rev = 0;
-  if (!recipesParseConfig(body.c_str(), &rev)) {
+  if (!recipesParseConfig(body, &rev)) {
     recipesLoad();
     pagesLoad();
     LOGLN("console config parse failed — NVS restored");
@@ -183,40 +222,91 @@ inline void consoleFetchConfig() {
   LOG("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
 }
 
+inline void consoleApplyConfigIfReady() {
+  if (!gConsoleConfigReady) {
+    return;
+  }
+  String body = gConsoleConfigBody;
+  gConsoleConfigBody = "";
+  gConsoleConfigReady = false;
+  consoleApplyConfig(body.c_str());
+}
+
+inline void consoleJobTask(void * /*arg*/) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    for (;;) {
+      bool doRegister = false;
+      portENTER_CRITICAL(&gConsoleMux);
+      if (!gConsolePending) {
+        gConsoleWorkerBusy = false;
+        portEXIT_CRITICAL(&gConsoleMux);
+        break;
+      }
+      gConsolePending = false;
+      doRegister = gConsoleDoRegister;
+      gConsoleDoRegister = false;
+      gConsoleWorkerBusy = true;
+      portEXIT_CRITICAL(&gConsoleMux);
+
+      if (doRegister) {
+        consoleRegister();
+      }
+      consoleFetchConfigHttp();
+      while (gConsoleConfigReady) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+      }
+    }
+  }
+}
+
+inline void consoleJobBegin() {
+  if (gConsoleTask) {
+    return;
+  }
+  xTaskCreatePinnedToCore(consoleJobTask, "consoleJob", 16384, nullptr, 1, &gConsoleTask, 0);
+}
+
 inline void consoleBootSync() {
   if (!consoleConfigured()) {
     LOGLN("console: CONSOLE_URL / CONSOLE_TOKEN not set");
     return;
   }
-  consoleRegister();
-  consoleFetchConfig();
   gConsoleLastPollMs = millis();
   gConsolePolledBoot = true;
+  consoleJobPost(true);
 }
 
 inline void consolePollTick(unsigned long now) {
+  consoleApplyConfigIfReady();
   if (!consoleConfigured() || WiFi.status() != WL_CONNECTED) {
     return;
   }
-  if (gNeedConsoleSync) {
-    gNeedConsoleSync = false;
-    gConsoleRegistered = false;
-    consoleRegister();
-    consoleFetchConfig();
-    gConsoleLastPollMs = now;
-    gConsolePolledBoot = true;
+  if (consoleJobBusy() || gConsoleConfigReady) {
+    return;
+  }
+  if (gTouchDown || gIdleWakeHold || gDimDragging || gTapWaitDouble) {
     return;
   }
 
-  const unsigned long interval = (gRecipeCount == 0) ? kPollEmptyMs : kPollArmedMs;
-  if (gConsolePolledBoot && (now - gConsoleLastPollMs) < interval) {
+  bool doRegister = false;
+  bool due = false;
+  if (gNeedConsoleSync) {
+    gNeedConsoleSync = false;
+    gConsoleRegistered = false;
+    doRegister = true;
+    due = true;
+  } else {
+    const unsigned long interval = (gRecipeCount == 0) ? kPollEmptyMs : kPollArmedMs;
+    if (!gConsolePolledBoot || (now - gConsoleLastPollMs) >= interval) {
+      due = true;
+      doRegister = !gConsoleRegistered || gRecipeCount > 0;
+    }
+  }
+  if (!due) {
     return;
   }
   gConsoleLastPollMs = now;
   gConsolePolledBoot = true;
-
-  if (!gConsoleRegistered || gRecipeCount > 0) {
-    consoleRegister();
-  }
-  consoleFetchConfig();
+  consoleJobPost(doRegister);
 }

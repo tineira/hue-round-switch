@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.13"
+#define FIRMWARE_VERSION "0.5.15"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -83,11 +83,11 @@ void setup() {
 
   recipesLoad();
   pagesLoad();
-  pagesFillDimFromRecipes();
   bootBegin();
   displayBegin();
   touchBegin();
   hueJobBegin();
+  consoleJobBegin();
 
   uiSet(UI_BOOT);
   uiPaint();
@@ -130,6 +130,7 @@ void loop() {
       wifiWait(8000);
     }
     bootPoll(now);
+    consolePollTick(now);
     uiTick(now);
     return;
   }
@@ -140,11 +141,9 @@ void loop() {
   }
 
   bootPoll(now);
+  consolePollTick(now);
   if (gHueReady) {
     uiPollTouch(now);
-    if (!gDimDragging && !gTouchDown && !gTapWaitDouble && !hueJobBusy()) {
-      consolePollTick(now);
-    }
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {
       const UiScreen next = uiFromRecipes();
       if (gUi != UI_ERROR && next != gUi) {

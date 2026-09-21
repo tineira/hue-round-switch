@@ -221,15 +221,23 @@ inline bool hueBuildSnapshot(String *lights, String *rooms, String *scenes) {
   *scenes = "[";
 
   SnapBuild lightCtx{lights, nullptr, 0};
-  hueStreamResource("light", snapshotOnLight, &lightCtx, nullptr);
+  if (!hueStreamResource("light", snapshotOnLight, &lightCtx, nullptr)) {
+    return false;
+  }
 
   SnapBuild roomCtx{rooms, "room", 0};
-  hueStreamResource("room", snapshotOnGroup, &roomCtx, nullptr);
+  if (!hueStreamResource("room", snapshotOnGroup, &roomCtx, nullptr)) {
+    return false;
+  }
   SnapBuild zoneCtx{rooms, "zone", 0};
-  hueStreamResource("zone", snapshotOnGroup, &zoneCtx, nullptr);
+  if (!hueStreamResource("zone", snapshotOnGroup, &zoneCtx, nullptr)) {
+    return false;
+  }
 
   SnapBuild sceneCtx{scenes, nullptr, 0};
-  hueStreamResource("scene", snapshotOnScene, &sceneCtx, nullptr);
+  if (!hueStreamResource("scene", snapshotOnScene, &sceneCtx, nullptr)) {
+    return false;
+  }
 
   *lights += ']';
   *rooms += ']';

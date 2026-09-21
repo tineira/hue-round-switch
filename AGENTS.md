@@ -46,19 +46,15 @@ Replace `COMx` with the XIAO port (`arduino-cli board list`, typically COM4 on H
 - PSRAM: OPI PSRAM. USB CDC on boot: Enabled. USB Mode: Hardware CDC and JTAG. Flash: 8 MB. `SERIAL_DEBUG` in `config.h`.
 - Libraries: ESP32 core + Arduino_GFX from this sketchbook. Not LVGL. Not GigaDash TFT_eSPI.
 
-## Channels (v1)
+## Pages (not GPIO)
 
-Screen, not GPIO contacts. The console still expects `{ id, gpio, label, kind }`:
+Screen, not wall contacts. Register with `"product": "round"` and `"channels": []`. Do not invent a `c1` / gpio `0` placeholder. `c1` is only old-device migration on the console; this firmware does not send it.
 
-| id | gpio | kind | label | event |
-| --- | --- | --- | --- | --- |
-| `c1` | `0` (placeholder; not a wall input) | `momentary` | `1` | tap → `short` |
+Physical BOOT (GPIO 0, hold 3 s) is Hue re-pair, not a recipe. Do not `pinMode` it as a maintained contact.
 
-`gpio: 0` exists only because the console rejects missing/`< 0` gpio. Do not `pinMode` it as a maintained contact. Physical BOOT (GPIO 0, hold 3 s) is re-pair Hue, not a recipe.
+Each page has tap (`short`) and double-tap (`double_click`) recipes, plus a dimmer ring from poll `pages[].dim` (§8.2): `null` (no ring), `{ mode: "group", rid }` (grouped_light), or `{ mode: "lights", rids }` (child lights). The ring is **not** “the same target as the recipe.” Finger position on the arc is 1–100, PUT on release. CHSC6X coords are often 0–127 and must be scaled to 240.
 
-Center tap fires the console recipe. The outer ring is brightness for the same target when it is `light` or `grouped_light` (not a scene): finger position on the arc is 1–100, PUT on release. The center disc is bright when that target is on, dim when off (GET Clip v2 `on`, poll ~20 s). CHSC6X coords are often 0–127 and must be scaled to 240. No extra console slot.
-
-More on-screen channels later. Recipes are assigned in the web console, not on the circle.
+Recipes are assigned in the web console, not on the circle.
 
 ## Code conventions
 

@@ -557,7 +557,9 @@ inline void pagesBindBridge(const String &bid) {
   if (!bid.length()) {
     return;
   }
-  if (gPageBridgeId.length() && !gPageBridgeId.equalsIgnoreCase(bid)) {
+  const bool mismatch = (gPageBridgeId.length() && !gPageBridgeId.equalsIgnoreCase(bid)) ||
+                        (!gPageBridgeId.length() && gPageCount > 0);
+  if (mismatch) {
     LOGLN("Bridge id changed — dropping pages");
     gPageBridgeId = bid;
     pagesClear();

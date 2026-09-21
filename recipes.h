@@ -31,6 +31,7 @@ inline uint8_t gRecipeCount = 0;
 inline uint32_t gRecipeRev = 0;
 inline String gRecipeBridgeId;
 inline bool gNeedConsoleSync = false;
+inline bool gRecipesBidReset = false;
 
 inline bool recipeEventOk(const char *e) {
   return e && (strcmp(e, "short") == 0 || strcmp(e, "double_click") == 0);
@@ -43,60 +44,6 @@ inline bool recipeActionOk(const char *a) {
 
 inline bool recipeRtypeOk(const char *r) {
   return r && (strcmp(r, "light") == 0 || strcmp(r, "grouped_light") == 0 || strcmp(r, "scene") == 0);
-}
-
-// dim:null en el poll (página sin group en DB): reconstruye el aro desde recetas.
-inline void pagesFillDimFromRecipes() {
-  for (uint8_t i = 0; i < gPageCount; i++) {
-    Page *p = &gPages[i];
-    if (p->dimMode != PAGE_DIM_NONE) {
-      continue;
-    }
-    bool scene = false;
-    bool groupAct = false;
-    char gl[40];
-    gl[0] = 0;
-    pageCopyField(gl, sizeof(gl), p->group.groupedLightRid);
-    uint8_t nLights = 0;
-    char lights[kMaxDimLights][40];
-    memset(lights, 0, sizeof(lights));
-    for (uint8_t r = 0; r < gRecipeCount; r++) {
-      if (strcmp(gRecipes[r].pageId, p->id) != 0) {
-        continue;
-      }
-      if (strcmp(gRecipes[r].action, "recall_scene") == 0) {
-        scene = true;
-      } else if (strcmp(gRecipes[r].rtype, "grouped_light") == 0 && gRecipes[r].rid[0]) {
-        groupAct = true;
-        if (!gl[0]) {
-          pageCopyField(gl, sizeof(gl), gRecipes[r].rid);
-        }
-      } else if (strcmp(gRecipes[r].rtype, "light") == 0 && gRecipes[r].rid[0] &&
-                 nLights < kMaxDimLights) {
-        bool dup = false;
-        for (uint8_t k = 0; k < nLights; k++) {
-          if (strcmp(lights[k], gRecipes[r].rid) == 0) {
-            dup = true;
-            break;
-          }
-        }
-        if (!dup) {
-          pageCopyField(lights[nLights], sizeof(lights[0]), gRecipes[r].rid);
-          nLights++;
-        }
-      }
-    }
-    if ((scene || groupAct) && gl[0]) {
-      p->dimMode = PAGE_DIM_GROUP;
-      pageCopyField(p->dimGroupRid, sizeof(p->dimGroupRid), gl);
-    } else if (!scene && !groupAct && nLights > 0) {
-      p->dimMode = PAGE_DIM_LIGHTS;
-      p->dimLightCount = nLights;
-      for (uint8_t k = 0; k < nLights; k++) {
-        pageCopyField(p->dimLights[k], sizeof(p->dimLights[0]), lights[k]);
-      }
-    }
-  }
 }
 
 inline void recipeCopyField(char *dst, size_t n, const char *src) {
@@ -382,10 +329,13 @@ inline void recipesBindBridge(const String &bid) {
   if (!bid.length()) {
     return;
   }
-  if (gRecipeBridgeId.length() && !gRecipeBridgeId.equalsIgnoreCase(bid)) {
+  const bool mismatch = (gRecipeBridgeId.length() && !gRecipeBridgeId.equalsIgnoreCase(bid)) ||
+                        (!gRecipeBridgeId.length() && (gRecipeCount > 0 || gRecipeRev > 0));
+  if (mismatch) {
     LOGLN("Bridge id changed — dropping recipes");
     gRecipeBridgeId = bid;
     recipesClear();
+    gRecipesBidReset = true;
     return;
   }
   if (gRecipeBridgeId != bid) {
@@ -477,7 +427,6 @@ inline bool recipesParseConfig(const char *body, uint32_t *revOut) {
     }
   }
   pagesClampIndex();
-  pagesFillDimFromRecipes();
   *revOut = static_cast<uint32_t>(rev);
   return true;
 }
