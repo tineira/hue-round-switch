@@ -65,3 +65,4 @@ Recipes are assigned in the web console, not on the circle.
 - `setInsecure()` only against the Hue Bridge. Verify TLS to `hue.tineira.com`
 - Do not impersonate Hue accessories or use Zigbee on this sketch
 - Do not put this sketch inside `hue-simple-switch`
+- Scratch notes (`docs/_audit-*.md`, `docs/_review-*.md`) are not spec. Delete them once used. Do not commit them.
