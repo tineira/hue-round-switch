@@ -50,6 +50,7 @@ inline uint8_t gUsbLineLen = 0;
 inline bool gImprovConnecting = false;
 inline unsigned long gImprovConnectAt = 0;
 inline bool gImprovScan = false;
+inline unsigned long gImprovScanAt = 0;
 
 inline bool usbWifiBusy() { return gImprovConnecting; }
 
@@ -127,9 +128,11 @@ inline void improvSendInfo() {
 
 inline void improvStartScan() {
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.scanDelete();
   WiFi.scanNetworks(true);
   gImprovScan = true;
+  gImprovScanAt = millis();
 }
 
 inline void improvPollScan() {
@@ -137,7 +140,16 @@ inline void improvPollScan() {
     return;
   }
   const int16_t n = WiFi.scanComplete();
+  const unsigned long elapsed = millis() - gImprovScanAt;
+  // Arduino can report FAILED/0 before WIFI_SCANNING_BIT is set. Do not
+  // send an empty RPC result until a scan has had time to run.
   if (n == WIFI_SCAN_RUNNING) {
+    return;
+  }
+  if (n == WIFI_SCAN_FAILED && elapsed < 15000UL) {
+    return;
+  }
+  if (n == 0 && elapsed < 3000UL) {
     return;
   }
   gImprovScan = false;
