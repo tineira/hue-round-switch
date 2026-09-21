@@ -6,10 +6,11 @@ Misma consola que `hue-simple-switch`: [hue.tineira.com](https://hue.tineira.com
 
 ## Setup
 
-1. Copia `config.example.h` a `config.h` y rellena `WIFI_SSID` / `WIFI_PASSWORD` (red **2.4 GHz**), `CONSOLE_URL` y `CONSOLE_TOKEN` (API key de aparato en la consola).
-2. El XIAO busca el Bridge por mDNS y puede emparejar la key Hue (pantalla: *Press the Bridge button*). Quedan en flash.
-3. Se registra en la consola (`POST /api/device/register`) con `"product": "round"` y `channels: []`, y pide config (`GET /api/device/config`: `pages[]`, recetas por `pageId`, `dim`).
-4. En la consola, edita **páginas** (grupo, tap, doble tap, theme). El tap **no** espera a Vercel: NVS → Bridge. El aro dimmea según `pages[].dim` (`group` o `lights`), no “el mismo target de la receta”. `c1` es solo migración vieja; este firmware no lo manda.
+1. **Producto:** flashea y provisiona desde Chrome en [hue.tineira.com](https://hue.tineira.com) (USB, sin Arduino). El binario de CI lleva `WIFI_*` / `CONSOLE_*` vacíos; Improv guarda la red 2.4 GHz y `HUESET` deja token/url en NVS `console`.
+2. **Desarrollo:** copia `config.example.h` a `config.h` y rellena `WIFI_SSID` / `WIFI_PASSWORD` (red **2.4 GHz**), `CONSOLE_URL` y `CONSOLE_TOKEN`. Esos `#define` solo se usan si Arduino no tiene red recordada y NVS `console` no tiene token.
+3. El XIAO busca el Bridge por mDNS y puede emparejar la key Hue (pantalla: *Press the Bridge button*). Quedan en flash.
+4. Se registra en la consola (`POST /api/device/register`) con `"product": "round"` y `channels: []`, y pide config (`GET /api/device/config`: `pages[]`, recetas por `pageId`, `dim`).
+5. En la consola, edita **páginas** (grupo, tap, doble tap, theme). El tap **no** espera a Vercel: NVS → Bridge. El aro dimmea según `pages[].dim` (`group` o `lights`). `c1` es solo migración vieja; este firmware no lo manda.
 
 Arduino IDE: abre `hue-round-switch.ino`, placa **XIAO_ESP32S3**, PSRAM **OPI**, USB CDC on boot **Enabled**.
 

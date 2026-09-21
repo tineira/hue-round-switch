@@ -4,6 +4,7 @@ config.h
 # Arduino / arduino-cli build output
 build/
 .cache/
+dist/
 *.elf
 *.map
 *.bin

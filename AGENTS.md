@@ -10,7 +10,7 @@ Same console as `hue-simple-switch` (`https://hue.tineira.com`). This board is a
 - Arduino IDE board name: `XIAO_ESP32S3`
 - FQBN: `esp32:esp32:XIAO_ESP32S3`
 - Core: Arduino-ESP32 **3.3.12** (already installed in `%LOCALAPPDATA%\Arduino15`)
-- Flash: 8 MB, PSRAM: 8 MB OPI. Default 8 MB partition (3 MB APP). USB CDC on boot: Enabled. USB Mode: **Hardware CDC and JTAG** (same COM for flash; DTR reset works without BOOT). Closing Serial Monitor resets the S3 (silicon). `SERIAL_DEBUG` in `config.h`: 0 = no logs / no `Serial.begin` (default); 1 = USB logs.
+- Flash: 8 MB, PSRAM: 8 MB OPI. Default 8 MB partition (3 MB APP). USB CDC on boot: Enabled. USB Mode: **Hardware CDC and JTAG** (same COM for flash; DTR reset works without BOOT). Closing Serial Monitor resets the S3 (silicon). `Serial.begin` always (Improv + `HUESET`). `SERIAL_DEBUG` in `config.h`: 0 = no USB logs (product); 1 = USB logs (dev; mixes with Improv).
 - Display: Seeed Studio Round Display for XIAO — 1.28" 240×240 GC9A01, capacitive touch CHSC6X (I2C `0x2E`, INT `D7`). Backlight `D6` (v1.1 slide switch must be ON).
 - Wi-Fi: 2.4 GHz only.
 
@@ -18,7 +18,7 @@ This sketch lives in the Arduino IDE sketchbook (`directories.user` = `C:\Users\
 
 ## Secrets
 
-- `config.h` (gitignored) holds `WIFI_SSID`, `WIFI_PASSWORD`, `CONSOLE_URL`, and `CONSOLE_TOKEN`.
+- `config.h` (gitignored) holds `WIFI_SSID`, `WIFI_PASSWORD`, `CONSOLE_URL`, and `CONSOLE_TOKEN` for **dev**. Product bins compile those empty; Wi-Fi is Arduino STA (Improv), token/url are NVS `console`.
 - Bridge IP, Hue application key, and recipes are not in `config.h`. Discover / pair / NVS / console poll.
 - `config.example.h` is the template that is committed.
 - Never put SSID, passwords, or Hue keys in the `.ino` or in git.

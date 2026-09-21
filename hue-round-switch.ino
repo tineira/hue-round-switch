@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.15"
+#define FIRMWARE_VERSION "0.5.16"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -18,10 +18,30 @@ String gHueAppKey;
 #include "channels.h"
 #include "ui.h"
 #include "console.h"
+#include "usb_setup.h"
+
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
 
 static bool gWifiWasUp = false;
 static bool gHueReady = false;
 static unsigned long gWifiLastTryMs = 0;
+
+static bool wifiHasArduinoCreds() { return WiFi.SSID().length() > 0; }
+
+static bool wifiHasDevSsid() { return WIFI_SSID[0] != '\0'; }
+
+static void wifiBeginKnown() {
+  if (wifiHasArduinoCreds()) {
+    WiFi.begin();
+  } else if (wifiHasDevSsid()) {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
+}
 
 static bool wifiWait(unsigned long maxMs) {
   const unsigned long start = millis();
@@ -29,6 +49,7 @@ static bool wifiWait(unsigned long maxMs) {
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < maxMs) {
     delay(250);
     LOGS(".");
+    usbPoll();
     uiTick(millis());
   }
   LOGLN("");
@@ -42,7 +63,10 @@ static void afterWifiUp() {
 
   uiSet(UI_LOADING);
   uiPaint();
-  gOnHueWait = []() { uiTick(millis()); };
+  gOnHueWait = []() {
+    usbPoll();
+    uiTick(millis());
+  };
   gOnHuePairing = [](bool pairing) {
     uiSet(pairing ? UI_PAIRING : UI_LOADING);
     uiPaint();
@@ -69,9 +93,9 @@ static void afterWifiUp() {
 }
 
 void setup() {
-#if SERIAL_DEBUG
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+#if SERIAL_DEBUG
   delay(200);
 #endif
 
@@ -81,6 +105,7 @@ void setup() {
   LOGLN("hue-round-switch");
   LOG("firmware %s  SSID: %s\n", FIRMWARE_VERSION, WIFI_SSID);
 
+  consoleLoadNvs();
   recipesLoad();
   pagesLoad();
   bootBegin();
@@ -96,10 +121,20 @@ void setup() {
   uiSet(UI_WIFI);
   uiPaint();
 
+  WiFi.persistent(true);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   gWifiLastTryMs = millis();
+
+  if (wifiHasArduinoCreds()) {
+    WiFi.begin();
+  } else if (wifiHasDevSsid()) {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  } else {
+    uiSet(UI_WIFI_FAIL);
+    uiPaint();
+    return;
+  }
 
   if (!wifiWait(15000)) {
     LOG("WiFi failed, status=%d (S3 needs the U.FL antenna)\n", (int)WiFi.status());
@@ -114,19 +149,21 @@ void setup() {
 
 void loop() {
   const unsigned long now = millis();
+  usbPoll();
 
   if (WiFi.status() != WL_CONNECTED) {
     gWifiWasUp = false;
     if (gUi != UI_WIFI && gUi != UI_WIFI_FAIL) {
       uiSet(UI_WIFI_FAIL);
     }
-    if (now - gWifiLastTryMs >= 10000) {
+    if (!usbWifiBusy() && (now - gWifiLastTryMs >= 10000) &&
+        (wifiHasArduinoCreds() || wifiHasDevSsid())) {
       gWifiLastTryMs = now;
       uiSet(UI_WIFI);
       uiPaint();
       LOGLN("WiFi retry");
       WiFi.disconnect();
-      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+      wifiBeginKnown();
       wifiWait(8000);
     }
     bootPoll(now);

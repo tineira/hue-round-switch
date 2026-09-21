@@ -4,6 +4,8 @@
 #include <HTTPClient.h>
 #include <NetworkClient.h>
 #include <NetworkClientSecure.h>
+#include <Preferences.h>
+#include <string.h>
 #include "config.h"
 #include "channels.h"
 #include "recipes.h"
@@ -21,10 +23,28 @@
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
 static const unsigned long kPollArmedMs = 60UL * 60UL * 1000UL;
+static const size_t kConsoleTokMax = 128;
+static const size_t kConsoleUrlMax = 128;
 
 inline bool gConsoleRegistered = false;
 inline unsigned long gConsoleLastPollMs = 0;
 inline bool gConsolePolledBoot = false;
+inline char gConsoleTokNvs[kConsoleTokMax] = {0};
+inline char gConsoleUrlNvs[kConsoleUrlMax] = {0};
+
+inline const char *consoleToken() {
+  if (gConsoleTokNvs[0]) {
+    return gConsoleTokNvs;
+  }
+  return CONSOLE_TOKEN;
+}
+
+inline const char *consoleUrl() {
+  if (gConsoleUrlNvs[0]) {
+    return gConsoleUrlNvs;
+  }
+  return CONSOLE_URL;
+}
 
 // Snapshot/register/GET config en tarea propia. Ready no espera 4×20 s.
 inline portMUX_TYPE gConsoleMux = portMUX_INITIALIZER_UNLOCKED;
@@ -36,14 +56,63 @@ inline String gConsoleConfigBody;
 inline bool gConsoleConfigReady = false;
 
 inline bool consoleConfigured() {
-  const char *url = CONSOLE_URL;
-  const char *tok = CONSOLE_TOKEN;
+  const char *url = consoleUrl();
+  const char *tok = consoleToken();
   if (!url || !url[0] || !tok || !tok[0]) {
     return false;
   }
   if (strstr(tok, "your-")) {
     return false;
   }
+  return true;
+}
+
+inline void consoleLoadNvs() {
+  gConsoleTokNvs[0] = 0;
+  gConsoleUrlNvs[0] = 0;
+  Preferences prefs;
+  if (!prefs.begin("console", true)) {
+    return;
+  }
+  const String tok = prefs.getString("token", "");
+  const String url = prefs.getString("url", "");
+  prefs.end();
+  if (tok.length() && tok.length() < kConsoleTokMax) {
+    memcpy(gConsoleTokNvs, tok.c_str(), tok.length() + 1);
+  }
+  if (url.length() && url.length() < kConsoleUrlMax) {
+    memcpy(gConsoleUrlNvs, url.c_str(), url.length() + 1);
+  }
+}
+
+inline bool consoleSetToken(const char *tok) {
+  if (!tok || !tok[0] || strlen(tok) >= kConsoleTokMax) {
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin("console", false)) {
+    return false;
+  }
+  prefs.putString("token", tok);
+  prefs.end();
+  memcpy(gConsoleTokNvs, tok, strlen(tok) + 1);
+  return true;
+}
+
+inline bool consoleSetUrl(const char *url) {
+  if (!url || !url[0] || strlen(url) >= kConsoleUrlMax) {
+    return false;
+  }
+  if (strncmp(url, "https://", 8) != 0 && strncmp(url, "http://", 7) != 0) {
+    return false;
+  }
+  Preferences prefs;
+  if (!prefs.begin("console", false)) {
+    return false;
+  }
+  prefs.putString("url", url);
+  prefs.end();
+  memcpy(gConsoleUrlNvs, url, strlen(url) + 1);
   return true;
 }
 
@@ -56,7 +125,7 @@ inline String deviceMacHex() {
 }
 
 inline String consoleBaseUrl() {
-  String url = CONSOLE_URL;
+  String url = consoleUrl();
   while (url.endsWith("/")) {
     url.remove(url.length() - 1);
   }
@@ -81,7 +150,7 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
     return -1;
   }
 
-  http.addHeader("Authorization", String("Bearer ") + CONSOLE_TOKEN);
+  http.addHeader("Authorization", String("Bearer ") + consoleToken());
   http.addHeader("Content-Type", "application/json");
 
   int code = -1;
@@ -269,7 +338,7 @@ inline void consoleJobBegin() {
 
 inline void consoleBootSync() {
   if (!consoleConfigured()) {
-    LOGLN("console: CONSOLE_URL / CONSOLE_TOKEN not set");
+    LOGLN("console: token/url not set");
     return;
   }
   gConsoleLastPollMs = millis();
