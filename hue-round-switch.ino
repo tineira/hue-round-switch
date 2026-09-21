@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.20"
+#define FIRMWARE_VERSION "0.5.21"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -107,7 +107,8 @@ static void afterWifiUp() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.setTxTimeoutMs(0);
+  // USB CDC: sin PC el write() espera al host. 100 ms: 0 descartaba escrituras si tx_lock estaba ocupado.
+  Serial.setTxTimeoutMs(100);
   improvHello();
   usbPoll();
   usbPump(200);

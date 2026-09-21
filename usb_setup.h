@@ -49,10 +49,13 @@ inline char gUsbLine[192];
 inline uint8_t gUsbLineLen = 0;
 inline bool gImprovConnecting = false;
 inline unsigned long gImprovConnectAt = 0;
-inline bool gImprovScan = false;
+inline bool gImprovScanPending = false;
+inline bool gImprovScanStarted = false;
+inline bool gImprovScanDefer = false;
 inline unsigned long gImprovScanAt = 0;
+inline unsigned long gImprovScanKickAt = 0;
 
-inline bool usbWifiBusy() { return gImprovConnecting || gImprovScan; }
+inline bool usbWifiBusy() { return gImprovConnecting || gImprovScanPending; }
 
 inline void usbReply(const char *line) {
   Serial.print(line);
@@ -131,39 +134,59 @@ inline void improvSendInfo() {
 }
 
 inline void improvStartScan() {
-  // Immediate STATE so the wizard sees a packet before scanComplete().
   if (gImprovConnecting) {
     improvSendState(improvCurrentState());
     improvSendRpcStrings(IMPROV_CMD_SCAN, nullptr, 0);
     return;
   }
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.scanDelete();
-  WiFi.scanNetworks(true, true);
-  gImprovScan = true;
+  // ACK de estado ya: scanNetworks/mode pueden bloquear el CDC y el wizard
+  // ve 4s de silencio. El scan arranca en el siguiente usbPoll.
+  gImprovScanPending = true;
+  gImprovScanStarted = false;
+  gImprovScanDefer = true;
   gImprovScanAt = millis();
   improvSendState(improvCurrentState());
 }
 
-inline void improvPollScan() {
-  if (!gImprovScan) {
+// Lanza el scan async. STA puede estar en WiFi.begin() desde el boot: hay que
+// cortar el intento (sin borrar NVS) o scanNetworks falla todo el rato.
+inline void improvKickScan() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.disconnect(false, false);
+  WiFi.scanDelete();
+  WiFi.scanNetworks(true);
+  gImprovScanKickAt = millis();
+}
+
+inline void improvBeginScan() {
+  if (!gImprovScanPending || gImprovScanStarted) {
+    return;
+  }
+  gImprovScanStarted = true;
+  gImprovScanAt = millis();
+  improvKickScan();
+}
+
+inline void improvFlushScan() {
+  if (!gImprovScanStarted) {
     return;
   }
   const int16_t n = WiFi.scanComplete();
   const unsigned long elapsed = millis() - gImprovScanAt;
-  // Arduino can report FAILED/0 before WIFI_SCANNING_BIT is set. Do not
-  // send an empty RPC result until a scan has had time to run.
   if (n == WIFI_SCAN_RUNNING) {
     return;
   }
-  if (n == WIFI_SCAN_FAILED && elapsed < 15000UL) {
+  // FAILED (o 0 muy pronto): reintentar cada ~400 ms hasta 15 s, sin quedarse quieto.
+  if ((n == WIFI_SCAN_FAILED || (n == 0 && elapsed < 3000UL)) && elapsed < 15000UL) {
+    if (millis() - gImprovScanKickAt >= 400UL) {
+      improvKickScan();
+    }
     return;
   }
-  if (n == 0 && elapsed < 3000UL) {
-    return;
-  }
-  gImprovScan = false;
+  gImprovScanPending = false;
+  gImprovScanStarted = false;
+  gImprovScanDefer = false;
   if (n > 0) {
     for (int16_t i = 0; i < n; i++) {
       char rssi[8];
@@ -218,7 +241,9 @@ inline void improvOnWifi(const uint8_t *p, uint8_t inner) {
   memcpy(pass, p + 2 + ssidLen, passLen);
   pass[passLen] = 0;
 
-  gImprovScan = false;
+  gImprovScanPending = false;
+  gImprovScanStarted = false;
+  gImprovScanDefer = false;
   WiFi.scanDelete();
   WiFi.persistent(true);
   WiFi.mode(WIFI_STA);
@@ -406,6 +431,14 @@ inline void usbPoll() {
   while (Serial.available() > 0) {
     usbOnByte((uint8_t)Serial.read());
   }
-  improvPollScan();
+
+  if (gImprovScanPending) {
+    if (gImprovScanDefer) {
+      gImprovScanDefer = false;
+    } else {
+      improvBeginScan();
+      improvFlushScan();
+    }
+  }
   improvPollConnect();
 }
