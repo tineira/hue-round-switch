@@ -52,7 +52,7 @@ inline unsigned long gImprovConnectAt = 0;
 inline bool gImprovScan = false;
 inline unsigned long gImprovScanAt = 0;
 
-inline bool usbWifiBusy() { return gImprovConnecting; }
+inline bool usbWifiBusy() { return gImprovConnecting || gImprovScan; }
 
 inline void usbReply(const char *line) {
   Serial.print(line);
@@ -127,10 +127,16 @@ inline void improvSendInfo() {
 }
 
 inline void improvStartScan() {
+  // Immediate STATE so the wizard sees a packet before scanComplete().
+  if (gImprovConnecting) {
+    improvSendState(improvCurrentState());
+    improvSendRpcStrings(IMPROV_CMD_SCAN, nullptr, 0);
+    return;
+  }
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.scanDelete();
-  WiFi.scanNetworks(true);
+  WiFi.scanNetworks(true, true);
   gImprovScan = true;
   gImprovScanAt = millis();
   improvSendState(improvCurrentState());
@@ -208,6 +214,8 @@ inline void improvOnWifi(const uint8_t *p, uint8_t inner) {
   memcpy(pass, p + 2 + ssidLen, passLen);
   pass[passLen] = 0;
 
+  gImprovScan = false;
+  WiFi.scanDelete();
   WiFi.persistent(true);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
