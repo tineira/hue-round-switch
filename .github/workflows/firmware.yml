@@ -1,0 +1,105 @@
+name: firmware-binaries
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-round:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Product config.h (empty Wi-Fi / token / URL)
+        run: |
+          printf '%s\n' \
+            '#pragma once' \
+            '#define WIFI_SSID ""' \
+            '#define WIFI_PASSWORD ""' \
+            '#define CONSOLE_URL ""' \
+            '#define CONSOLE_TOKEN ""' \
+            '#ifndef SERIAL_DEBUG' \
+            '#define SERIAL_DEBUG 0' \
+            '#endif' > config.h
+
+      - name: Compile and export binaries
+        run: arduino-cli compile --profile xiao-s3 --export-binaries .
+
+      - name: Stage installer names
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*#define FIRMWARE_VERSION "\([^"]*\)".*/\1/p' hue-round-switch.ino | tr -d '\r' | head -n1)
+          if [ -z "$VERSION" ]; then
+            echo "FIRMWARE_VERSION not found" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p dist/installer
+          bootloader=$(find build -name 'hue-round-switch.ino.bootloader.bin' | head -n1)
+          partitions=$(find build -name 'hue-round-switch.ino.partitions.bin' | head -n1)
+          boot_app0=$(find build -name 'boot_app0.bin' | head -n1)
+          firmware=$(find build -name 'hue-round-switch.ino.bin' | head -n1)
+          test -n "$bootloader" -a -n "$partitions" -a -n "$boot_app0" -a -n "$firmware"
+          cp "$bootloader" dist/installer/bootloader.bin
+          cp "$partitions" dist/installer/partitions.bin
+          cp "$boot_app0" dist/installer/boot_app0.bin
+          cp "$firmware" dist/installer/firmware.bin
+          ls -l dist/installer
+
+      - name: Upload flash parts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hue-round-switch
+          path: |
+            dist/installer/bootloader.bin
+            dist/installer/partitions.bin
+            dist/installer/boot_app0.bin
+            dist/installer/firmware.bin
+          if-no-files-found: error
+
+      - name: Publish rolling usb-installer release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view usb-installer >/dev/null 2>&1; then
+            gh release delete usb-installer --yes --cleanup-tag 2>/dev/null \
+              || gh release delete usb-installer --yes
+          fi
+          git push origin --delete usb-installer 2>/dev/null || true
+          gh release create usb-installer \
+            --title "USB installer ${VERSION}" \
+            --notes "Round Display product bins (${VERSION}). Empty Wi-Fi/token. Four parts for hue.tineira.com; see docs/firmware-artifacts.md." \
+            --target "${GITHUB_SHA}" \
+            dist/installer/bootloader.bin \
+            dist/installer/partitions.bin \
+            dist/installer/boot_app0.bin \
+            dist/installer/firmware.bin
+
+      - name: Notify console repo
+        env:
+          CONSOLE_REPO_TOKEN: ${{ secrets.CONSOLE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CONSOLE_REPO_TOKEN:-}" ]; then
+            echo "CONSOLE_REPO_TOKEN missing; skip repository_dispatch"
+            exit 0
+          fi
+          GH_TOKEN="$CONSOLE_REPO_TOKEN" gh api repos/tineira/hue-switch-console/dispatches \
+            --input - <<EOF
+          {
+            "event_type": "firmware-bins",
+            "client_payload": {
+              "product": "round",
+              "version": "${VERSION}"
+            }
+          }
+          EOF

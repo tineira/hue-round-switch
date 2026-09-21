@@ -1,6 +1,6 @@
 #pragma once
 
-// SERIAL_DEBUG en config.h (0 = sin USB log, arranque más corto).
+// SERIAL_DEBUG en config.h (0 = sin USB log). Serial.begin va siempre (Improv / HUESET).
 #ifndef SERIAL_DEBUG
 #define SERIAL_DEBUG 0
 #endif
