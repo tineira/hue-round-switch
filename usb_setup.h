@@ -440,7 +440,7 @@ inline void usbReplySta() {
     nvsCopyStr(conPrefs, "token", tok, sizeof(tok));
     conPrefs.end();
   }
-  const char *tokenFlag = (tok[0] && !strstr(tok, "your-")) ? "1" : "0";
+  const char *tokenFlag = consoleLooksLikeToken(tok) ? "1" : "0";
   const char *keyFlag = hueLooksLikeKey(String(key)) ? "1" : "0";
 
   static char line[1280];

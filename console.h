@@ -18,7 +18,7 @@
 #define CONSOLE_TOKEN ""
 #endif
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.22"
+#define FIRMWARE_VERSION "0.5.23"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
@@ -57,13 +57,30 @@ inline bool gConsoleConfigReady = false;
 inline volatile uint32_t gConsoleEpoch = 1;
 inline uint32_t gConsoleBodyEpoch = 0;
 
+// Minted keys are hsw_ plus base64url. Anything else is not a console token.
+inline bool consoleLooksLikeToken(const char *tok) {
+  if (!tok || strncmp(tok, "hsw_", 4) != 0) {
+    return false;
+  }
+  const size_t n = strlen(tok);
+  if (n < 20 || n > 80) {
+    return false;
+  }
+  for (size_t i = 4; i < n; i++) {
+    const char c = tok[i];
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                    c == '-' || c == '_';
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
 inline bool consoleConfigured() {
   const char *url = consoleUrl();
   const char *tok = consoleToken();
-  if (!url || !url[0] || !tok || !tok[0]) {
-    return false;
-  }
-  if (strstr(tok, "your-")) {
+  if (!url || !url[0] || !consoleLooksLikeToken(tok)) {
     return false;
   }
   return true;
