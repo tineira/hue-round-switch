@@ -306,6 +306,19 @@ inline void recipesClear() {
   recipesSave();
 }
 
+inline void recipesForgetSaved() {
+  Preferences prefs;
+  if (prefs.begin("recipes", false)) {
+    prefs.clear();
+    prefs.end();
+  }
+  gRecipeCount = 0;
+  gRecipeRev = 0;
+  gRecipeBridgeId = "";
+  gRecipesBidReset = false;
+  gNeedConsoleSync = false;
+}
+
 inline void recipesLoad() {
   Preferences prefs;
   prefs.begin("recipes", true);

@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.21"
+#define FIRMWARE_VERSION "0.5.22"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -174,9 +174,66 @@ void setup() {
   afterWifiUp();
 }
 
+static void usbApplyUi() {
+  if (gUsbWantWifiFail) {
+    gUsbWantWifiFail = false;
+    gHuePairShowPending = false;
+    gWifiWasUp = false;
+    hueStrLock();
+    gHuePairOutcome = 0;
+    hueStrUnlock();
+    uiSet(UI_WIFI_FAIL);
+    uiPaint();
+  }
+  if (gHuePairShowPending && !gHuePairOutcome && gHuePairBusy && !gWifiStaForgotten) {
+    gHuePairShowPending = false;
+    uiSet(UI_PAIRING);
+    uiPaint();
+  } else {
+    gHuePairShowPending = false;
+  }
+  if (!gHuePairOutcome) {
+    return;
+  }
+  hueStrLock();
+  const uint8_t outcome = gHuePairOutcome;
+  gHuePairOutcome = 0;
+  const bool fresh = !gHuePairCancel && gHuePairEpoch == gHueClrEpoch;
+  const String bid = gHueBridgeId;
+  hueStrUnlock();
+  if (!fresh) {
+    return;
+  }
+  if (outcome == 1) {
+    gHueReady = true;
+    recipesBindBridge(bid);
+    pagesBindBridge(bid);
+    gNeedConsoleSync = true;
+    uiSet(uiFromRecipes());
+    uiPaint();
+    return;
+  }
+  if (gUi == UI_PAIRING) {
+    uiSet(gHueReady ? uiFromRecipes() : UI_NO_BRIDGE);
+    uiPaint();
+  }
+}
+
 void loop() {
   const unsigned long now = millis();
   usbPoll();
+  usbApplyUi();
+
+  if (gWifiStaForgotten) {
+    wifiKeepForgotten();
+    gWifiWasUp = false;
+    if (!usbWifiBusy() && gUi != UI_WIFI_FAIL && gUi != UI_BOOT && gUi != UI_WIFI) {
+      uiSet(UI_WIFI_FAIL);
+    }
+    bootPoll(now);
+    uiTick(now);
+    return;
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     gWifiWasUp = false;
@@ -206,7 +263,7 @@ void loop() {
 
   bootPoll(now);
   consolePollTick(now);
-  if (gHueReady) {
+  if (gHueReady && gUi != UI_PAIRING) {
     uiPollTouch(now);
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {
       const UiScreen next = uiFromRecipes();

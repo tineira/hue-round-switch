@@ -16,6 +16,47 @@
 extern String gHueBridgeIp;
 extern String gHueAppKey;
 
+// Copia corta bajo mutex: el re-pair USB y HUECLR escriben estas String
+// desde otro contexto que hueHttp.
+inline SemaphoreHandle_t gHueStrMux = nullptr;
+
+inline void hueStrEnsure() {
+  if (!gHueStrMux) {
+    gHueStrMux = xSemaphoreCreateMutex();
+  }
+}
+
+inline void hueStrLock() {
+  if (gHueStrMux) {
+    xSemaphoreTake(gHueStrMux, portMAX_DELAY);
+  }
+}
+
+inline void hueStrUnlock() {
+  if (gHueStrMux) {
+    xSemaphoreGive(gHueStrMux);
+  }
+}
+
+inline void hueSetAppKey(const String &v) {
+  hueStrLock();
+  gHueAppKey = v;
+  hueStrUnlock();
+}
+
+inline void hueSetBridgeIp(const String &v) {
+  hueStrLock();
+  gHueBridgeIp = v;
+  hueStrUnlock();
+}
+
+inline bool hueRamReady() {
+  hueStrLock();
+  const bool ok = gHueBridgeIp.length() > 0 && gHueAppKey.length() > 0;
+  hueStrUnlock();
+  return ok;
+}
+
 // El Bridge usa un certificado propio; Clip v2 exige HTTPS local.
 // setInsecure() evita validar esa CA (solo LAN, no cloud).
 
@@ -32,8 +73,14 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
     return -1;
   }
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 8000);
-  if (withKey && gHueAppKey.length()) {
-    http.addHeader("hue-application-key", gHueAppKey);
+  String keyCopy;
+  if (withKey) {
+    hueStrLock();
+    keyCopy = gHueAppKey;
+    hueStrUnlock();
+  }
+  if (withKey && keyCopy.length()) {
+    http.addHeader("hue-application-key", keyCopy);
   }
   if (body) {
     http.addHeader("Content-Type", "application/json");
@@ -54,11 +101,15 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
 }
 
 inline int hueClipStream(const char *resource, JsonDataSink &sink) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !resource) {
+  hueStrLock();
+  const String ip = gHueBridgeIp;
+  const String key = gHueAppKey;
+  hueStrUnlock();
+  if (!ip.length() || !key.length() || !resource) {
     return -1;
   }
   String url = "https://";
-  url += gHueBridgeIp;
+  url += ip;
   url += "/clip/v2/resource/";
   url += resource;
   NetworkClientSecure client;
@@ -68,7 +119,7 @@ inline int hueClipStream(const char *resource, JsonDataSink &sink) {
     return -1;
   }
   http.setTimeout(20000);
-  http.addHeader("hue-application-key", gHueAppKey);
+  http.addHeader("hue-application-key", key);
   const int code = http.GET();
   if (code == HTTP_CODE_OK) {
     http.writeToStream(&sink);
@@ -78,8 +129,11 @@ inline int hueClipStream(const char *resource, JsonDataSink &sink) {
 }
 
 inline String hueResourceUrl(const char *rtype, const char *rid) {
+  hueStrLock();
+  const String ip = gHueBridgeIp;
+  hueStrUnlock();
   String url = "https://";
-  url += gHueBridgeIp;
+  url += ip;
   url += "/clip/v2/resource/";
   url += rtype;
   url += "/";
@@ -92,7 +146,7 @@ inline bool hueParseOn(const String &body, bool *on) {
 }
 
 inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !on) {
+  if (!hueRamReady() || !rtype || !rid || !on) {
     LOGLN("Hue GET: begin failed");
     return false;
   }
@@ -112,7 +166,7 @@ inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
 }
 
 inline bool hueSetOn(const char *rtype, const char *rid, bool on) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid) {
+  if (!hueRamReady() || !rtype || !rid) {
     LOGLN("Hue PUT: begin failed");
     return false;
   }
@@ -128,7 +182,7 @@ inline bool hueSetOn(const char *rtype, const char *rid, bool on) {
 }
 
 inline bool hueSceneActive(const char *rid, bool *active) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid || !rid[0] || !active) {
+  if (!hueRamReady() || !rid || !rid[0] || !active) {
     return false;
   }
   String body;
@@ -141,7 +195,7 @@ inline bool hueSceneActive(const char *rid, bool *active) {
 }
 
 inline int hueRecallSceneHttp(const char *rid) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rid || !rid[0]) {
+  if (!hueRamReady() || !rid || !rid[0]) {
     LOGLN("Hue recall: begin failed");
     return -1;
   }
@@ -158,7 +212,7 @@ inline int hueRecallSceneHttp(const char *rid) {
 inline bool hueRecallScene(const char *rid) { return hueRecallSceneHttp(rid) == HTTP_CODE_OK; }
 
 inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *pct) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !rid[0]) {
+  if (!hueRamReady() || !rtype || !rid || !rid[0]) {
     return false;
   }
   String body;
@@ -190,7 +244,7 @@ inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
 
 // PUT de brillo. turnOn agrega on.on=true (set lights todo off). 404 se salta.
 inline bool huePutDimming(const char *rtype, const char *rid, int pct, bool turnOn) {
-  if (!gHueBridgeIp.length() || !gHueAppKey.length() || !rtype || !rid || !rid[0]) {
+  if (!hueRamReady() || !rtype || !rid || !rid[0]) {
     return false;
   }
   if (pct < 1) {

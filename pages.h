@@ -528,6 +528,22 @@ inline void pagesClear() {
   pagesSave();
 }
 
+// HUECLR: namespace vacío. La página por defecto queda solo en RAM.
+inline void pagesForgetSaved() {
+  Preferences prefs;
+  if (prefs.begin("pages", false)) {
+    prefs.clear();
+    prefs.end();
+  }
+  gPageCount = 0;
+  gPageIndex = 0;
+  gPageSwipeAxis = PAGE_SWIPE_HORIZONTAL;
+  gPageBridgeId = "";
+  gScreenTimeoutSec = kScreenTimeoutDefault;
+  pagesClearLastScenes();
+  pagesEnsureDefault();
+}
+
 inline void pagesLoad() {
   Preferences prefs;
   prefs.begin("pages", true);

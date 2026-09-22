@@ -18,7 +18,7 @@
 #define CONSOLE_TOKEN ""
 #endif
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.1.0"
+#define FIRMWARE_VERSION "0.5.22"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
@@ -54,6 +54,8 @@ inline bool gConsoleDoRegister = false;
 inline TaskHandle_t gConsoleTask = nullptr;
 inline String gConsoleConfigBody;
 inline bool gConsoleConfigReady = false;
+inline volatile uint32_t gConsoleEpoch = 1;
+inline uint32_t gConsoleBodyEpoch = 0;
 
 inline bool consoleConfigured() {
   const char *url = consoleUrl();
@@ -133,6 +135,11 @@ inline String consoleBaseUrl() {
 }
 
 inline int consoleHttp(const char *method, const String &path, const char *body, String *response) {
+  char tokLocal[kConsoleTokMax];
+  portENTER_CRITICAL(&gConsoleMux);
+  strlcpy(tokLocal, gConsoleTokNvs, sizeof(tokLocal));
+  portEXIT_CRITICAL(&gConsoleMux);
+  const char *tok = tokLocal[0] ? tokLocal : CONSOLE_TOKEN;
   const String url = consoleBaseUrl() + path;
   HTTPClient http;
   http.setTimeout(15000);
@@ -150,7 +157,7 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
     return -1;
   }
 
-  http.addHeader("Authorization", String("Bearer ") + consoleToken());
+  http.addHeader("Authorization", String("Bearer ") + tok);
   http.addHeader("Content-Type", "application/json");
 
   int code = -1;
@@ -189,7 +196,11 @@ inline bool consoleRegister() {
   if (!consoleConfigured()) {
     return false;
   }
-  if (!gHueBridgeId.length() || !gHueBridgeIp.length()) {
+  hueStrLock();
+  const String bid = gHueBridgeId;
+  const String bip = gHueBridgeIp;
+  hueStrUnlock();
+  if (!bid.length() || !bip.length()) {
     LOGLN("console register skipped: no Bridge");
     return false;
   }
@@ -207,9 +218,9 @@ inline bool consoleRegister() {
   payload += ",\"firmware\":";
   jsonAppendEscaped(payload, FIRMWARE_VERSION);
   payload += ",\"bridgeid\":";
-  jsonAppendEscaped(payload, gHueBridgeId.c_str());
+  jsonAppendEscaped(payload, bid.c_str());
   payload += ",\"bridge_ip\":";
-  jsonAppendEscaped(payload, gHueBridgeIp.c_str());
+  jsonAppendEscaped(payload, bip.c_str());
   payload += ",\"product\":\"round\",\"source\":\"xiao\",\"channels\":";
   channelsAppendJson(payload);
   payload += ",\"lights\":";
@@ -236,6 +247,7 @@ inline void consoleFetchConfigHttp() {
   if (!consoleConfigured()) {
     return;
   }
+  const uint32_t epoch = gConsoleEpoch;
   String path = "/api/device/config?mac=";
   path += deviceMacHex();
   String body;
@@ -250,8 +262,39 @@ inline void consoleFetchConfigHttp() {
     }
     return;
   }
+  if (epoch != gConsoleEpoch) {
+    return;
+  }
   gConsoleConfigBody = body;
+  gConsoleBodyEpoch = epoch;
+  if (epoch != gConsoleEpoch) {
+    gConsoleConfigBody = "";
+    gConsoleConfigReady = false;
+    return;
+  }
   gConsoleConfigReady = true;
+}
+
+inline void consoleForget() {
+  portENTER_CRITICAL(&gConsoleMux);
+  gConsoleTokNvs[0] = 0;
+  gConsoleUrlNvs[0] = 0;
+  gConsolePending = false;
+  gConsoleDoRegister = false;
+  portEXIT_CRITICAL(&gConsoleMux);
+  gConsoleRegistered = false;
+  gConsolePolledBoot = false;
+  gNeedConsoleSync = false;
+  gConsoleEpoch++;
+  if (gConsoleEpoch == 0) {
+    gConsoleEpoch = 1;
+  }
+  gConsoleConfigReady = false;
+  Preferences prefs;
+  if (prefs.begin("console", false)) {
+    prefs.clear();
+    prefs.end();
+  }
 }
 
 inline void consoleApplyConfig(const char *body) {
@@ -293,6 +336,11 @@ inline void consoleApplyConfig(const char *body) {
 
 inline void consoleApplyConfigIfReady() {
   if (!gConsoleConfigReady) {
+    return;
+  }
+  if (gConsoleBodyEpoch != gConsoleEpoch) {
+    gConsoleConfigReady = false;
+    gConsoleConfigBody = "";
     return;
   }
   String body = gConsoleConfigBody;

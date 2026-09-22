@@ -6,8 +6,9 @@
 #include "log.h"
 #include "pages.h"
 #include "recipes.h"
+#include "hue_discover.h"
 
-// Un slot last-wins. HTTP Clip v2 corre en esta tarea, no en loop()/touch.
+// Un slot last-wins. HTTP Clip v2 y el re-pair de HUEPAIR corren aqui, no en loop()/touch.
 
 enum HueJobKind : uint8_t {
   HUE_JOB_NONE = 0,
@@ -595,6 +596,28 @@ inline void hueJobTask(void * /*arg*/) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     for (;;) {
+      if (gHuePairReq) {
+        gHuePairReq = false;
+        const uint32_t epoch = gHuePairEpoch;
+        gHuePairAsync = true;
+        portENTER_CRITICAL(&gHueJobMux);
+        gHueWorkerBusy = true;
+        portEXIT_CRITICAL(&gHueJobMux);
+        const bool ok = hueRePair();
+        hueStrLock();
+        if (gHuePairCancel || epoch != gHueClrEpoch) {
+          gHueBridgeIp = "";
+          gHueAppKey = "";
+          gHueBridgeId = "";
+          gHuePairOutcome = 0;
+        } else {
+          gHuePairOutcome = ok ? static_cast<uint8_t>(1) : static_cast<uint8_t>(2);
+        }
+        gHuePairAsync = false;
+        gHuePairBusy = false;
+        hueStrUnlock();
+        continue;
+      }
       HueJob job{};
       portENTER_CRITICAL(&gHueJobMux);
       if (!gHuePendingSet) {
@@ -631,5 +654,7 @@ inline void hueJobBegin() {
   if (gHueTask) {
     return;
   }
-  xTaskCreatePinnedToCore(hueJobTask, "hueJob", 16384, nullptr, 1, &gHueTask, 0);
+  hueStrEnsure();
+  // Re-pair: mDNS + POST 90 s. Mas pila que un PUT de receta.
+  xTaskCreatePinnedToCore(hueJobTask, "hueJob", 24576, nullptr, 1, &gHueTask, 0);
 }

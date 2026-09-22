@@ -52,13 +52,22 @@ inline void bootPoll(unsigned long now) {
   if (reading == LOW && gBoot.stable == LOW && gBoot.pressStartMs && !gBoot.longPressHandled &&
       (now - gBoot.pressStartMs) >= kLongPressMs) {
     gBoot.longPressHandled = true;
-    if (WiFi.status() != WL_CONNECTED) {
+    if (gWifiStaForgotten || WiFi.status() != WL_CONNECTED) {
       LOGLN("Re-pair skipped: WiFi down");
-    } else if (hueRePair()) {
-      LOG("Using Bridge %s\n", gHueBridgeIp.c_str());
-      recipesBindBridge(gHueBridgeId);
-      pagesBindBridge(gHueBridgeId);
-      gNeedConsoleSync = true;
+    } else if (gHuePairBusy || gHuePairReq) {
+      LOGLN("Re-pair skipped: already pairing");
+    } else {
+      gHuePairCancel = false;
+      if (hueRePair()) {
+        hueStrLock();
+        const String ip = gHueBridgeIp;
+        const String id = gHueBridgeId;
+        hueStrUnlock();
+        LOG("Using Bridge %s\n", ip.c_str());
+        recipesBindBridge(id);
+        pagesBindBridge(id);
+        gNeedConsoleSync = true;
+      }
     }
     return;
   }

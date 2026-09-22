@@ -17,6 +17,33 @@ inline void (*gOnHuePairing)(bool pairing) = nullptr;
 
 inline String gHueBridgeId;
 
+// HUEPAIR corre en la tarea hueJob. Estas banderas las mira el parser USB.
+inline volatile bool gHuePairAsync = false;
+inline volatile bool gHuePairBusy = false;
+inline volatile bool gHuePairReq = false;
+inline volatile bool gHuePairCancel = false;
+inline volatile uint32_t gHueClrEpoch = 1;
+inline volatile uint32_t gHuePairEpoch = 0;
+inline volatile uint8_t gHuePairOutcome = 0;
+inline volatile bool gHuePairShowPending = false;
+inline volatile bool gUsbWantWifiFail = false;
+inline volatile bool gWifiStaForgotten = false;
+
+inline void hueSetBridgeId(const String &v) {
+  hueStrLock();
+  gHueBridgeId = v;
+  hueStrUnlock();
+}
+
+inline void hueZeroRam() {
+  hueStrLock();
+  gHueBridgeIp = "";
+  gHueAppKey = "";
+  gHueBridgeId = "";
+  gHuePairOutcome = 0;
+  hueStrUnlock();
+}
+
 inline bool hueLooksLikeIp(const String &s) {
   if (s.length() < 7 || s.indexOf('x') >= 0) {
     return false;
@@ -56,29 +83,81 @@ inline bool hueProbeBridge(const String &ip, String *bridgeId) {
 inline void hueLoadStore() {
   Preferences prefs;
   prefs.begin("hue", true);
-  gHueBridgeIp = prefs.getString("ip", "");
-  gHueAppKey = prefs.getString("key", "");
-  gHueBridgeId = prefs.getString("bid", "");
+  String ip = prefs.getString("ip", "");
+  String key = prefs.getString("key", "");
+  const String id = prefs.getString("bid", "");
   prefs.end();
 
-  if (!hueLooksLikeIp(gHueBridgeIp) && hueLooksLikeIp(HUE_BRIDGE_IP)) {
-    gHueBridgeIp = HUE_BRIDGE_IP;
+  if (!hueLooksLikeIp(ip) && hueLooksLikeIp(HUE_BRIDGE_IP)) {
+    ip = HUE_BRIDGE_IP;
   }
-  if (!hueLooksLikeKey(gHueAppKey) && hueLooksLikeKey(HUE_APP_KEY)) {
-    gHueAppKey = HUE_APP_KEY;
+  if (!hueLooksLikeKey(key) && hueLooksLikeKey(HUE_APP_KEY)) {
+    key = HUE_APP_KEY;
   }
+  hueStrLock();
+  gHueBridgeIp = ip;
+  gHueAppKey = key;
+  gHueBridgeId = id;
+  hueStrUnlock();
+}
+
+// Solo la application key guardada. IP y bridge id siguen para el discover.
+inline void hueClearSavedKey() {
+  hueSetAppKey("");
+  Preferences prefs;
+  if (!prefs.begin("hue", false)) {
+    return;
+  }
+  prefs.putString("key", "");
+  prefs.end();
+}
+
+inline void hueForgetSaved() {
+  Preferences prefs;
+  if (prefs.begin("hue", false)) {
+    prefs.clear();
+    prefs.end();
+  }
+  hueZeroRam();
 }
 
 inline void hueSaveStore() {
+  if (gHuePairCancel) {
+    return;
+  }
+  const uint32_t epoch = gHueClrEpoch;
+  hueStrLock();
+  const String ip = gHueBridgeIp;
+  const String key = gHueAppKey;
+  const String id = gHueBridgeId;
+  hueStrUnlock();
+  if (gHuePairCancel || epoch != gHueClrEpoch) {
+    return;
+  }
   Preferences prefs;
-  prefs.begin("hue", false);
-  prefs.putString("ip", gHueBridgeIp);
-  prefs.putString("key", gHueAppKey);
-  prefs.putString("bid", gHueBridgeId);
+  if (!prefs.begin("hue", false)) {
+    return;
+  }
+  prefs.putString("ip", ip);
+  prefs.putString("key", key);
+  prefs.putString("bid", id);
   prefs.end();
+  if (gHuePairCancel || epoch != gHueClrEpoch) {
+    Preferences wipe;
+    if (wipe.begin("hue", false)) {
+      wipe.clear();
+      wipe.end();
+    }
+  }
 }
 
 inline bool hueDiscoverMdns() {
+  if (gHuePairCancel) {
+    return false;
+  }
+  hueStrLock();
+  const String wantId = gHueBridgeId;
+  hueStrUnlock();
   String host = "hue-sw-";
   host += String((uint16_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
   if (!MDNS.begin(host.c_str())) {
@@ -90,6 +169,9 @@ inline bool hueDiscoverMdns() {
   LOG("mDNS _hue._tcp: %d\n", n);
   String chosen;
   for (int i = 0; i < n; i++) {
+    if (gHuePairCancel) {
+      return false;
+    }
     const IPAddress ip = MDNS.address(i);
     if (ip == IPAddress()) {
       continue;
@@ -97,7 +179,7 @@ inline bool hueDiscoverMdns() {
     const String ipStr = ip.toString();
     const String bid = MDNS.hasTxt(i, "bridgeid") ? MDNS.txt(i, "bridgeid") : String();
     LOG("  %s  %s  bridgeid=%s\n", MDNS.instanceName(i).c_str(), ipStr.c_str(), bid.c_str());
-    if (gHueBridgeId.length() && bid.length() && bid.equalsIgnoreCase(gHueBridgeId)) {
+    if (wantId.length() && bid.length() && bid.equalsIgnoreCase(wantId)) {
       chosen = ipStr;
       break;
     }
@@ -109,7 +191,7 @@ inline bool hueDiscoverMdns() {
   if (!chosen.length()) {
     return false;
   }
-  gHueBridgeIp = chosen;
+  hueSetBridgeIp(chosen);
   return true;
 }
 
@@ -125,37 +207,72 @@ inline bool hueDiscoverCloud() {
     return false;
   }
   LOG("  cloud IP %s\n", ip.c_str());
-  gHueBridgeIp = ip;
+  hueSetBridgeIp(ip);
   return true;
 }
 
 inline bool hueFindBridge() {
+  if (gHuePairCancel) {
+    return false;
+  }
+  hueStrLock();
   const String cached = gHueBridgeIp;
+  hueStrUnlock();
 
   if (hueDiscoverMdns()) {
+    if (gHuePairCancel) {
+      return false;
+    }
+    hueStrLock();
+    const String ip = gHueBridgeIp;
+    hueStrUnlock();
     String id;
-    if (hueProbeBridge(gHueBridgeIp, &id)) {
-      gHueBridgeId = id;
-      LOG("Bridge via mDNS %s id=%s\n", gHueBridgeIp.c_str(), gHueBridgeId.c_str());
+    if (hueProbeBridge(ip, &id)) {
+      hueSetBridgeId(id);
+      LOG("Bridge via mDNS %s id=%s\n", ip.c_str(), id.c_str());
       return true;
     }
   }
 
-  if (hueLooksLikeIp(cached) && hueProbeBridge(cached, &gHueBridgeId)) {
-    gHueBridgeIp = cached;
-    LOG("Bridge via cache %s\n", gHueBridgeIp.c_str());
-    return true;
+  if (gHuePairCancel) {
+    return false;
+  }
+  if (hueLooksLikeIp(cached)) {
+    String id;
+    if (hueProbeBridge(cached, &id)) {
+      hueSetBridgeIp(cached);
+      hueSetBridgeId(id);
+      LOG("Bridge via cache %s\n", cached.c_str());
+      return true;
+    }
   }
 
-  if (hueLooksLikeIp(HUE_BRIDGE_IP) && hueProbeBridge(HUE_BRIDGE_IP, &gHueBridgeId)) {
-    gHueBridgeIp = HUE_BRIDGE_IP;
-    LOG("Bridge via config.h %s\n", gHueBridgeIp.c_str());
-    return true;
+  if (gHuePairCancel) {
+    return false;
+  }
+  if (hueLooksLikeIp(HUE_BRIDGE_IP)) {
+    String id;
+    if (hueProbeBridge(HUE_BRIDGE_IP, &id)) {
+      hueSetBridgeIp(String(HUE_BRIDGE_IP));
+      hueSetBridgeId(id);
+      LOG("Bridge via config.h %s\n", HUE_BRIDGE_IP);
+      return true;
+    }
   }
 
-  if (hueDiscoverCloud() && hueProbeBridge(gHueBridgeIp, &gHueBridgeId)) {
-    LOG("Bridge via cloud %s\n", gHueBridgeIp.c_str());
-    return true;
+  if (gHuePairCancel) {
+    return false;
+  }
+  if (hueDiscoverCloud()) {
+    hueStrLock();
+    const String ip = gHueBridgeIp;
+    hueStrUnlock();
+    String id;
+    if (hueProbeBridge(ip, &id)) {
+      hueSetBridgeId(id);
+      LOG("Bridge via cloud %s\n", ip.c_str());
+      return true;
+    }
   }
 
   LOGLN("Bridge not found");
@@ -169,26 +286,36 @@ inline void hueBlink(unsigned long ms) {
 
 // POST /api hasta que pulsen el botón del Bridge (o timeout).
 inline bool huePairAppKey() {
-  if (!hueLooksLikeIp(gHueBridgeIp)) {
+  hueStrLock();
+  const String ip = gHueBridgeIp;
+  hueStrUnlock();
+  if (!hueLooksLikeIp(ip)) {
     return false;
   }
 
   LOGLN("Pairing: press the Bridge link button");
-  if (gOnHuePairing) {
+  // En async la pantalla la pinta el loop. Desde esta tarea no se toca el TFT ni el CDC.
+  if (!gHuePairAsync && gOnHuePairing) {
     gOnHuePairing(true);
   }
   const unsigned long start = millis();
   while (millis() - start < kPairTimeoutMs) {
+    if (gHuePairCancel) {
+      break;
+    }
     hueBlink(millis() - start);
     String body;
-    const int code = hueHttp("https://" + gHueBridgeIp + "/api", "POST",
+    const int code = hueHttp("https://" + ip + "/api", "POST",
                              "{\"devicetype\":\"hue-round-switch#xiao\"}", &body, false, true);
+    if (gHuePairCancel) {
+      break;
+    }
     String user;
     if (jsonStringField(body, "username", &user) && hueLooksLikeKey(user)) {
-      gHueAppKey = user;
+      hueSetAppKey(user);
       digitalWrite(LED_BUILTIN, HIGH);
       LOGLN("Paired (key stored in flash)");
-      if (gOnHuePairing) {
+      if (!gHuePairAsync && gOnHuePairing) {
         gOnHuePairing(false);
       }
       return true;
@@ -196,25 +323,35 @@ inline bool huePairAppKey() {
     if (body.indexOf("link button not pressed") < 0 && code > 0) {
       LOG("Pair POST %d %s\n", code, body.c_str());
     }
-    if (gOnHueWait) {
+    if (!gHuePairAsync && gOnHueWait) {
       gOnHueWait();
     }
-    delay(400);
+    for (uint8_t i = 0; i < 8 && !gHuePairCancel; i++) {
+      delay(50);
+    }
   }
   digitalWrite(LED_BUILTIN, LOW);
-  LOGLN("Pairing timeout");
-  if (gOnHuePairing) {
+  if (gHuePairCancel) {
+    LOGLN("Pairing cancelled");
+  } else {
+    LOGLN("Pairing timeout");
+  }
+  if (!gHuePairAsync && gOnHuePairing) {
     gOnHuePairing(false);
   }
   return false;
 }
 
 inline bool hueKeyWorks() {
-  if (!hueLooksLikeKey(gHueAppKey) || !hueLooksLikeIp(gHueBridgeIp)) {
+  hueStrLock();
+  const String key = gHueAppKey;
+  const String ip = gHueBridgeIp;
+  hueStrUnlock();
+  if (!hueLooksLikeKey(key) || !hueLooksLikeIp(ip)) {
     return false;
   }
   String body;
-  const int code = hueHttp("https://" + gHueBridgeIp + "/clip/v2/resource/bridge", "GET", nullptr, &body, true, true);
+  const int code = hueHttp("https://" + ip + "/clip/v2/resource/bridge", "GET", nullptr, &body, true, true);
   LOG("Hue auth GET %d\n", code);
   return code == HTTP_CODE_OK;
 }
@@ -235,13 +372,21 @@ inline bool hueEnsureReady() {
 
 inline bool hueRePair() {
   LOGLN("Re-pair requested");
-  gHueAppKey = "";
-  if (!hueFindBridge()) {
-    return false;
+  const bool ownBusy = !gHuePairBusy;
+  if (ownBusy) {
+    gHuePairBusy = true;
   }
-  if (!huePairAppKey()) {
-    return false;
+  hueSetAppKey("");
+  bool ok = false;
+  if (!gHuePairCancel && hueFindBridge() && !gHuePairCancel && huePairAppKey() && !gHuePairCancel) {
+    hueSaveStore();
+    ok = !gHuePairCancel && hueKeyWorks();
   }
-  hueSaveStore();
-  return hueKeyWorks();
+  if (gHuePairCancel) {
+    ok = false;
+  }
+  if (ownBusy) {
+    gHuePairBusy = false;
+  }
+  return ok;
 }

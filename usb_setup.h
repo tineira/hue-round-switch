@@ -1,10 +1,12 @@
 #pragma once
 
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <string.h>
 #include "console.h"
+#include "hue_job.h"
 
-// Improv Serial + HUESET on USB CDC. Logs stay behind SERIAL_DEBUG so they
+// Improv Serial + HUESET/HUEGET/HUEPAIR/HUECLR on USB CDC. Logs stay behind SERIAL_DEBUG so they
 // do not mix with binary Improv packets in the product binary.
 
 static const uint8_t kImprovMagic[6] = {'I', 'M', 'P', 'R', 'O', 'V'};
@@ -249,6 +251,7 @@ inline void improvOnWifi(const uint8_t *p, uint8_t inner) {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.disconnect(false, false);
+  gWifiStaForgotten = false;
   WiFi.begin(ssid, pass);
   gImprovConnecting = true;
   gImprovConnectAt = millis();
@@ -295,6 +298,218 @@ inline void usbResetParse() {
   gUsbLineLen = 0;
 }
 
+inline bool usbAppendRaw(char *dst, size_t cap, size_t *len, const char *s) {
+  if (!s) {
+    s = "";
+  }
+  const size_t n = strlen(s);
+  if (*len + n >= cap) {
+    return false;
+  }
+  memcpy(dst + *len, s, n);
+  *len += n;
+  return true;
+}
+
+inline bool usbAppendPct(char *dst, size_t cap, size_t *len, const char *val) {
+  if (!val) {
+    val = "";
+  }
+  static const char kHex[] = "0123456789ABCDEF";
+  for (const unsigned char *p = reinterpret_cast<const unsigned char *>(val); *p; p++) {
+    const unsigned char c = *p;
+    const bool raw = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+                     c == '.' || c == '_' || c == '~';
+    if (raw) {
+      if (*len + 1 >= cap) {
+        return false;
+      }
+      dst[(*len)++] = static_cast<char>(c);
+    } else {
+      if (*len + 3 >= cap) {
+        return false;
+      }
+      dst[(*len)++] = '%';
+      dst[(*len)++] = kHex[c >> 4];
+      dst[(*len)++] = kHex[c & 0x0F];
+    }
+  }
+  return true;
+}
+
+inline bool usbAppendField(char *dst, size_t cap, size_t *len, bool *first, const char *key, const char *val) {
+  if (!*first && !usbAppendRaw(dst, cap, len, " ")) {
+    return false;
+  }
+  *first = false;
+  if (!usbAppendRaw(dst, cap, len, key) || !usbAppendRaw(dst, cap, len, "=")) {
+    return false;
+  }
+  return usbAppendPct(dst, cap, len, val);
+}
+
+inline void nvsCopyStr(Preferences &prefs, const char *key, char *out, size_t cap) {
+  out[0] = 0;
+  if (!cap) {
+    return;
+  }
+  const String v = prefs.getString(key, "");
+  size_t n = v.length();
+  if (n >= cap) {
+    n = cap - 1;
+  }
+  memcpy(out, v.c_str(), n);
+  out[n] = 0;
+}
+
+// SSID guardado en la STA (NVS del driver), tambien con el radio caido. No el de config.h.
+inline void staSavedSsid(char *out, size_t cap) {
+  out[0] = 0;
+  if (!cap) {
+    return;
+  }
+  wifi_config_t conf;
+  memset(&conf, 0, sizeof(conf));
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK) {
+    return;
+  }
+  size_t n = strnlen(reinterpret_cast<const char *>(conf.sta.ssid), sizeof(conf.sta.ssid));
+  if (n >= cap) {
+    n = cap - 1;
+  }
+  memcpy(out, conf.sta.ssid, n);
+  out[n] = 0;
+}
+
+inline void wifiForgetSta() {
+  gWifiStaForgotten = true;
+  gImprovConnecting = false;
+  gImprovScanPending = false;
+  gImprovScanStarted = false;
+  gImprovScanDefer = false;
+  WiFi.scanDelete();
+  WiFi.persistent(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  esp_wifi_disconnect();
+  wifi_config_t conf;
+  memset(&conf, 0, sizeof(conf));
+  esp_wifi_set_config(WIFI_IF_STA, &conf);
+}
+
+inline void wifiKeepForgotten() {
+  if (!gWifiStaForgotten || usbWifiBusy()) {
+    return;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    esp_wifi_disconnect();
+  }
+}
+
+inline void usbReplySta() {
+  char mac[13];
+  strlcpy(mac, deviceMacHex().c_str(), sizeof(mac));
+  char ssid[33];
+  staSavedSsid(ssid, sizeof(ssid));
+  const bool up = WiFi.status() == WL_CONNECTED;
+  char ip[16];
+  ip[0] = 0;
+  if (up) {
+    strlcpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip));
+  }
+  char bid[80];
+  char bip[48];
+  char url[kConsoleUrlMax];
+  char key[128];
+  char tok[kConsoleTokMax];
+  bid[0] = 0;
+  bip[0] = 0;
+  url[0] = 0;
+  key[0] = 0;
+  tok[0] = 0;
+  Preferences huePrefs;
+  if (huePrefs.begin("hue", true)) {
+    nvsCopyStr(huePrefs, "bid", bid, sizeof(bid));
+    nvsCopyStr(huePrefs, "ip", bip, sizeof(bip));
+    nvsCopyStr(huePrefs, "key", key, sizeof(key));
+    huePrefs.end();
+  }
+  Preferences conPrefs;
+  if (conPrefs.begin("console", true)) {
+    nvsCopyStr(conPrefs, "url", url, sizeof(url));
+    nvsCopyStr(conPrefs, "token", tok, sizeof(tok));
+    conPrefs.end();
+  }
+  const char *tokenFlag = (tok[0] && !strstr(tok, "your-")) ? "1" : "0";
+  const char *keyFlag = hueLooksLikeKey(String(key)) ? "1" : "0";
+
+  static char line[1280];
+  size_t len = 0;
+  bool first = true;
+  bool ok = usbAppendRaw(line, sizeof(line), &len, "HUESTA ");
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "mac", mac);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "product", "round");
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "ver", FIRMWARE_VERSION);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "chip", "s3");
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "ssid", ssid);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "wifi", up ? "up" : "down");
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "ip", up ? ip : "");
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "bid", bid);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "bip", bip);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "url", url);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "token", tokenFlag);
+  ok = ok && usbAppendField(line, sizeof(line), &len, &first, "key", keyFlag);
+  if (!ok || len + 1 > sizeof(line)) {
+    usbReply("HUEERR unknown");
+    return;
+  }
+  line[len] = 0;
+  usbReply(line);
+}
+
+inline void usbCmdPair() {
+  if (WiFi.status() != WL_CONNECTED) {
+    usbReply("HUEERR no-wifi");
+    return;
+  }
+  if (gHuePairBusy || gHuePairReq) {
+    usbReply("HUEOK pair");
+    return;
+  }
+  if (!gHueTask) {
+    usbReply("HUEERR unknown");
+    return;
+  }
+  hueClearSavedKey();
+  hueStrLock();
+  gHuePairOutcome = 0;
+  hueStrUnlock();
+  gHuePairCancel = false;
+  gHuePairEpoch = gHueClrEpoch;
+  gHuePairAsync = true;
+  gHuePairBusy = true;
+  gHuePairReq = true;
+  gHuePairShowPending = true;
+  xTaskNotifyGive(gHueTask);
+  usbReply("HUEOK pair");
+}
+
+inline void usbCmdClear() {
+  gHuePairCancel = true;
+  gHueClrEpoch++;
+  if (gHueClrEpoch == 0) {
+    gHueClrEpoch = 1;
+  }
+  gHuePairShowPending = false;
+  gUsbWantWifiFail = true;
+  wifiForgetSta();
+  consoleForget();
+  recipesForgetSaved();
+  pagesForgetSaved();
+  hueForgetSaved();
+  usbReply("HUEOK clear");
+}
+
 inline void usbHandleLine() {
   gUsbLine[gUsbLineLen] = 0;
   char *line = gUsbLine;
@@ -308,7 +523,24 @@ inline void usbHandleLine() {
   if (!n) {
     return;
   }
+  if (strcmp(line, "HUEGET") == 0) {
+    usbReplySta();
+    return;
+  }
+  if (strcmp(line, "HUEPAIR") == 0) {
+    usbCmdPair();
+    return;
+  }
+  if (strcmp(line, "HUECLR") == 0) {
+    usbCmdClear();
+    return;
+  }
+  if (strcmp(line, "HUESET") == 0) {
+    usbReply("HUEERR missing value");
+    return;
+  }
   if (strncmp(line, "HUESET ", 7) != 0) {
+    usbReply("HUEERR unknown");
     return;
   }
   char *rest = line + 7;
