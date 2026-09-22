@@ -380,7 +380,9 @@ inline bool hueRePair() {
   bool ok = false;
   if (!gHuePairCancel && hueFindBridge() && !gHuePairCancel && huePairAppKey() && !gHuePairCancel) {
     hueSaveStore();
-    ok = !gHuePairCancel && hueKeyWorks();
+    hueKeyWorks();
+    // El POST ya entregó la key. Un GET de comprobación fallido no devuelve la pantalla a “sin Bridge”.
+    ok = !gHuePairCancel && hueLooksLikeKey(gHueAppKey);
   }
   if (gHuePairCancel) {
     ok = false;
