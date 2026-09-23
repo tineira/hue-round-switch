@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.24"
+#define FIRMWARE_VERSION "0.5.25"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -30,6 +30,9 @@ String gHueAppKey;
 static bool gWifiWasUp = false;
 static bool gHueReady = false;
 static unsigned long gWifiLastTryMs = 0;
+static bool gSawHueAuthRejected = false;
+
+static void applyStickyScreens();
 
 static bool wifiHasArduinoCreds() { return WiFi.SSID().length() > 0; }
 
@@ -57,6 +60,7 @@ static bool wifiWait(unsigned long maxMs) {
   LOGS("WiFi");
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < maxMs) {
     usbPoll();
+    applyStickyScreens();
     uiTick(millis());
     if (usbWifiBusy()) {
       LOGLN("");
@@ -74,29 +78,45 @@ static void afterWifiUp() {
   LOG("mac %s\n", deviceMacHex().c_str());
   digitalWrite(LED_BUILTIN, HIGH);
 
-  uiSet(UI_LOADING);
-  uiPaint();
+  if (!gConsoleAuthRejected) {
+    uiSet(UI_LOADING);
+    uiPaint();
+  }
   gOnHueWait = []() {
     usbPoll();
+    applyStickyScreens();
     uiTick(millis());
   };
   gOnHuePairing = [](bool pairing) {
+    if (gConsoleAuthRejected) {
+      return;
+    }
+    if (!pairing && gHueAuthRejected) {
+      uiSet(UI_NO_BRIDGE);
+      uiPaint();
+      return;
+    }
     uiSet(pairing ? UI_PAIRING : UI_LOADING);
     uiPaint();
   };
 
   if (!hueEnsureReady()) {
     LOGLN("Hue setup failed - press Bridge button if pairing, check Wi-Fi LAN");
-    uiSet(UI_NO_BRIDGE);
-    uiPaint();
     gHueReady = false;
+    if (!gConsoleAuthRejected && gUi != UI_PAIRING) {
+      uiSet(UI_NO_BRIDGE);
+      uiPaint();
+    }
     return;
   }
-  gHueReady = true;
+  gHueReady = !gHueAuthRejected;
   LOG("Using Bridge %s id=%s\n", gHueBridgeIp.c_str(), gHueBridgeId.c_str());
   recipesBindBridge(gHueBridgeId);
   pagesBindBridge(gHueBridgeId);
   consoleBootSync();
+  if (gConsoleAuthRejected || gHueAuthRejected) {
+    return;
+  }
   uiSet(uiFromRecipes());
   if (gUi == UI_READY) {
     uiLoadLevel();
@@ -174,6 +194,73 @@ void setup() {
   afterWifiUp();
 }
 
+static void gestureDrop() {
+  gTouchDown = false;
+  gUiPressed = false;
+  gTapWaitDouble = false;
+  gSecondTap = false;
+  gDimDragging = false;
+  gSwipeDone = false;
+  gTouchMode = TOUCH_IDLE;
+}
+
+static void showPages() {
+  uiSet(uiFromRecipes());
+  if (gUi == UI_READY) {
+    uiLoadLevel();
+  }
+}
+
+// Las tareas solo ponen las banderas. Esta función, desde loop(), pinta.
+// Token rechazado gana sobre No Wi-Fi, páginas, Hue error y No Bridge.
+static void applyStickyScreens() {
+  if (gConsoleAuthRejected) {
+    gestureDrop();
+    if (gHueAuthRejected) {
+      gHueReady = false;
+      gSawHueAuthRejected = true;
+    }
+    if (gUi != UI_TOKEN) {
+      uiSet(UI_TOKEN);
+    }
+    return;
+  }
+
+  if (gHueAuthRejected) {
+    gHueReady = false;
+    gSawHueAuthRejected = true;
+    gestureDrop();
+    if (gUi != UI_PAIRING && gUi != UI_NO_BRIDGE) {
+      uiSet(UI_NO_BRIDGE);
+    }
+    return;
+  }
+
+  if (gSawHueAuthRejected) {
+    gSawHueAuthRejected = false;
+    if (hueRamReady()) {
+      gHueReady = true;
+    }
+    if (gHueReady && gUi == UI_NO_BRIDGE && !gHuePairBusy && !gHuePairReq) {
+      showPages();
+      return;
+    }
+  }
+
+  if (gUi == UI_TOKEN) {
+    gestureDrop();
+    if (gWifiStaForgotten || WiFi.status() != WL_CONNECTED) {
+      uiSet(UI_WIFI_FAIL);
+    } else if (gHuePairBusy || gHuePairReq) {
+      uiSet(UI_PAIRING);
+    } else if (gHueReady) {
+      showPages();
+    } else {
+      uiSet(UI_NO_BRIDGE);
+    }
+  }
+}
+
 static void usbApplyUi() {
   if (gUsbWantWifiFail) {
     gUsbWantWifiFail = false;
@@ -182,13 +269,17 @@ static void usbApplyUi() {
     hueStrLock();
     gHuePairOutcome = 0;
     hueStrUnlock();
-    uiSet(UI_WIFI_FAIL);
-    uiPaint();
+    if (!gConsoleAuthRejected && !gHueAuthRejected) {
+      uiSet(UI_WIFI_FAIL);
+      uiPaint();
+    }
   }
   if (gHuePairShowPending && !gHuePairOutcome && gHuePairBusy && !gWifiStaForgotten) {
     gHuePairShowPending = false;
-    uiSet(UI_PAIRING);
-    uiPaint();
+    if (!gConsoleAuthRejected) {
+      uiSet(UI_PAIRING);
+      uiPaint();
+    }
   } else {
     gHuePairShowPending = false;
   }
@@ -205,15 +296,26 @@ static void usbApplyUi() {
     return;
   }
   if (outcome == 1) {
-    gHueReady = true;
     recipesBindBridge(bid);
     pagesBindBridge(bid);
     gNeedConsoleSync = true;
-    uiSet(uiFromRecipes());
-    uiPaint();
+    gHueReady = !gHueAuthRejected;
+    if (!gConsoleAuthRejected && !gHueAuthRejected) {
+      uiSet(uiFromRecipes());
+      uiPaint();
+    }
     return;
   }
   if (gUi == UI_PAIRING) {
+    if (gConsoleAuthRejected) {
+      return;
+    }
+    if (gHueAuthRejected) {
+      gHueReady = false;
+      uiSet(UI_NO_BRIDGE);
+      uiPaint();
+      return;
+    }
     uiSet(gHueReady ? uiFromRecipes() : UI_NO_BRIDGE);
     uiPaint();
   }
@@ -227,24 +329,28 @@ void loop() {
   if (gWifiStaForgotten) {
     wifiKeepForgotten();
     gWifiWasUp = false;
-    if (!usbWifiBusy() && gUi != UI_WIFI_FAIL && gUi != UI_BOOT && gUi != UI_WIFI) {
+    if (!gConsoleAuthRejected && !gHueAuthRejected && !usbWifiBusy() && gUi != UI_WIFI_FAIL &&
+        gUi != UI_BOOT && gUi != UI_WIFI) {
       uiSet(UI_WIFI_FAIL);
     }
     bootPoll(now);
+    applyStickyScreens();
     uiTick(now);
     return;
   }
 
   if (WiFi.status() != WL_CONNECTED) {
     gWifiWasUp = false;
-    if (gUi != UI_WIFI && gUi != UI_WIFI_FAIL) {
+    if (!gConsoleAuthRejected && !gHueAuthRejected && gUi != UI_WIFI && gUi != UI_WIFI_FAIL) {
       uiSet(UI_WIFI_FAIL);
     }
     if (!usbWifiBusy() && (now - gWifiLastTryMs >= 10000) &&
         (wifiHasArduinoCreds() || wifiHasDevSsid())) {
       gWifiLastTryMs = now;
-      uiSet(UI_WIFI);
-      uiPaint();
+      if (!gConsoleAuthRejected && !gHueAuthRejected) {
+        uiSet(UI_WIFI);
+        uiPaint();
+      }
       LOGLN("WiFi retry");
       WiFi.disconnect();
       wifiBeginKnown();
@@ -252,6 +358,7 @@ void loop() {
     }
     bootPoll(now);
     consolePollTick(now);
+    applyStickyScreens();
     uiTick(now);
     return;
   }
@@ -263,7 +370,8 @@ void loop() {
 
   bootPoll(now);
   consolePollTick(now);
-  if (gHueReady && gUi != UI_PAIRING) {
+  applyStickyScreens();
+  if (!gConsoleAuthRejected && gHueReady && gUi != UI_PAIRING && gUi != UI_TOKEN) {
     uiPollTouch(now);
     if (gUi == UI_EMPTY || gUi == UI_READY || gUi == UI_ERROR) {
       const UiScreen next = uiFromRecipes();

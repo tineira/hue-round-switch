@@ -21,6 +21,7 @@ enum UiScreen {
   UI_READY,
   UI_BUSY,
   UI_ERROR,
+  UI_TOKEN,
 };
 
 enum TouchMode { TOUCH_IDLE = 0, TOUCH_CENTER, TOUCH_RING };
@@ -295,6 +296,7 @@ inline uint16_t uiRingColor(UiScreen s, unsigned long now) {
     case UI_ERROR:
     case UI_WIFI_FAIL:
     case UI_NO_BRIDGE:
+    case UI_TOKEN:
       return t->error;
     case UI_EMPTY:
       return t->mute;
@@ -458,6 +460,9 @@ inline void uiPaint() {
     case UI_ERROR:
       line = "Hue error";
       break;
+    case UI_TOKEN:
+      line = "Token rejected";
+      break;
   }
   if (gUi == UI_BOOT) {
 #ifndef FIRMWARE_VERSION
@@ -480,6 +485,8 @@ inline void uiPaint() {
     displayTextCenter("on the Hue Bridge", 166, 1, t->mute);
   } else if (gUi == UI_NO_BRIDGE) {
     displayTextCenter("same LAN as Bridge", 166, 1, t->mute);
+  } else if (gUi == UI_TOKEN) {
+    displayTextCenter("Set a new one in Devices", 166, 1, t->mute);
   }
 
   if (gUi == UI_READY) {
@@ -611,7 +618,7 @@ inline void uiHueJobPoll() {
       if (gScreenIdle) {
         return;
       }
-      if (gUi == UI_READY || gUi == UI_EMPTY) {
+      if (!gHueAuthRejected && (gUi == UI_READY || gUi == UI_EMPTY)) {
         gUiPressed = false;
         uiSet(UI_ERROR);
         uiPaint();
@@ -644,7 +651,7 @@ inline void uiHueJobPoll() {
     }
     return;
   }
-  if (!r.ok && !gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+  if (!r.ok && !gScreenIdle && !gHueAuthRejected && (gUi == UI_READY || gUi == UI_EMPTY)) {
     gUiPressed = false;
     uiSet(UI_ERROR);
     uiPaint();
@@ -679,8 +686,8 @@ inline bool uiFireEvent(const char *event) {
   if (gScreenIdle || gIdleWakeHold) {
     return false;
   }
-  if (gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING || gUi == UI_PAIRING ||
-      gUi == UI_BOOT) {
+  if (gHueAuthRejected || gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING ||
+      gUi == UI_PAIRING || gUi == UI_BOOT || gUi == UI_TOKEN) {
     return false;
   }
   const bool split = uiSplitTwoLights();

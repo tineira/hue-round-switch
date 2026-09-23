@@ -18,7 +18,7 @@
 #define CONSOLE_TOKEN ""
 #endif
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.24"
+#define FIRMWARE_VERSION "0.5.25"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
@@ -31,6 +31,20 @@ inline unsigned long gConsoleLastPollMs = 0;
 inline bool gConsolePolledBoot = false;
 inline char gConsoleTokNvs[kConsoleTokMax] = {0};
 inline char gConsoleUrlNvs[kConsoleUrlMax] = {0};
+
+// 401 de consola, pegado en RAM. No va a NVS. Se limpia al boot.
+inline volatile bool gConsoleAuthRejected = false;
+
+inline void consoleNoteHttp(int code) {
+  if (code == HTTP_CODE_UNAUTHORIZED) {
+    gConsoleAuthRejected = true;
+    return;
+  }
+  // Timeout, -1 o Wi-Fi caído (code <= 0) no despegan el 401.
+  if (code > 0) {
+    gConsoleAuthRejected = false;
+  }
+}
 
 inline const char *consoleToken() {
   if (gConsoleTokNvs[0]) {
@@ -115,6 +129,8 @@ inline bool consoleSetToken(const char *tok) {
   prefs.putString("token", tok);
   prefs.end();
   memcpy(gConsoleTokNvs, tok, strlen(tok) + 1);
+  // HUESET token nuevo despega el 401 antes de la próxima respuesta.
+  gConsoleAuthRejected = false;
   return true;
 }
 
@@ -187,6 +203,7 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
     *response = http.getString();
   }
   http.end();
+  consoleNoteHttp(code);
   return code;
 }
 
@@ -301,6 +318,7 @@ inline void consoleForget() {
   portEXIT_CRITICAL(&gConsoleMux);
   gConsoleRegistered = false;
   gConsolePolledBoot = false;
+  gConsoleAuthRejected = false;
   gNeedConsoleSync = false;
   gConsoleEpoch++;
   if (gConsoleEpoch == 0) {

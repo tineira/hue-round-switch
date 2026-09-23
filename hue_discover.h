@@ -313,6 +313,8 @@ inline bool huePairAppKey() {
     String user;
     if (jsonStringField(body, "username", &user) && hueLooksLikeKey(user)) {
       hueSetAppKey(user);
+      // Igual que simple: 20 s para que un 401 inmediato no deje No Bridge pegado.
+      hueAuthGraceArm(20000);
       digitalWrite(LED_BUILTIN, HIGH);
       LOGLN("Paired (key stored in flash)");
       if (!gHuePairAsync && gOnHuePairing) {

@@ -57,6 +57,37 @@ inline bool hueRamReady() {
   return ok;
 }
 
+// 401/403 con la application key: la key ya no sirve. RAM, se pierde al boot.
+// Discovery o /api/config (sin key) no cuentan. Un 200 con key recupera.
+// Timeout, 5xx o Bridge caído no ponen ni quitan la bandera.
+inline volatile bool gHueAuthRejected = false;
+inline unsigned long gHueAuthGraceUntil = 0;
+
+inline void hueAuthGraceArm(unsigned long ms) {
+  gHueAuthGraceUntil = millis() + ms;
+  gHueAuthRejected = false;
+}
+
+inline bool hueAuthGraceOpen() {
+  return (long)(gHueAuthGraceUntil - millis()) > 0;
+}
+
+inline void hueNoteAuth(int code, const String *body, bool withKey) {
+  if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
+    if (!withKey || hueAuthGraceOpen()) {
+      return;
+    }
+    if (body && body->indexOf("link button not pressed") >= 0) {
+      return;
+    }
+    gHueAuthRejected = true;
+    return;
+  }
+  if (withKey && code == HTTP_CODE_OK) {
+    gHueAuthRejected = false;
+  }
+}
+
 // El Bridge usa un certificado propio; Clip v2 exige HTTPS local.
 // setInsecure() evita validar esa CA (solo LAN, no cloud).
 
@@ -79,7 +110,8 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
     keyCopy = gHueAppKey;
     hueStrUnlock();
   }
-  if (withKey && keyCopy.length()) {
+  const bool sentKey = withKey && keyCopy.length() > 0;
+  if (sentKey) {
     http.addHeader("hue-application-key", keyCopy);
   }
   if (body) {
@@ -93,10 +125,17 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
   } else {
     code = http.PUT(body ? String(body) : String());
   }
+  String denied;
+  const String *noted = nullptr;
   if (response) {
     *response = http.getString();
+    noted = response;
+  } else if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
+    denied = http.getString();
+    noted = &denied;
   }
   http.end();
+  hueNoteAuth(code, noted, sentKey);
   return code;
 }
 
@@ -121,10 +160,16 @@ inline int hueClipStream(const char *resource, JsonDataSink &sink) {
   http.setTimeout(20000);
   http.addHeader("hue-application-key", key);
   const int code = http.GET();
+  String denied;
+  const String *noted = nullptr;
   if (code == HTTP_CODE_OK) {
     http.writeToStream(&sink);
+  } else if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
+    denied = http.getString();
+    noted = &denied;
   }
   http.end();
+  hueNoteAuth(code, noted, true);
   return code;
 }
 
