@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.25"
+#define FIRMWARE_VERSION "0.5.26"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -34,7 +34,12 @@ static bool gSawHueAuthRejected = false;
 
 static void applyStickyScreens();
 
-static bool wifiHasArduinoCreds() { return WiFi.SSID().length() > 0; }
+// WiFi.SSID() está vacío hasta asociar. La red de Improv vive en la NVS de la STA.
+static bool wifiHasArduinoCreds() {
+  char ssid[33];
+  staSavedSsid(ssid, sizeof(ssid));
+  return ssid[0] != 0;
+}
 
 static bool wifiHasDevSsid() { return WIFI_SSID[0] != '\0'; }
 

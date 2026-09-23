@@ -44,6 +44,6 @@ esptool-js: `--flash-mode dio`, `--flash-freq 80m`, `--flash-size 8MB`. Do **not
 
 `default_8MB.csv`: nvs `0x9000` / `0x5000` (20 KB), otadata `0xe000` / `0x2000`, app0 `0x10000` / `0x330000`, app1 `0x340000` / `0x330000`, spiffs `0x670000` / `0x180000`.
 
-Firmware version is `FIRMWARE_VERSION` in `hue-round-switch.ino` (`0.5.25`). The console manifest should show that string.
+Firmware version is `FIRMWARE_VERSION` in `hue-round-switch.ino` (`0.5.26`). The console manifest should show that string.
 
 Do not flash a C6 with this map. The installer must read the chip and abort if it is not an ESP32-S3.
