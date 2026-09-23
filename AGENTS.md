@@ -9,7 +9,7 @@ Same console as `hue-simple-switch` (`https://hue.tineira.com`). This board is a
 This firmware is one of several switches for one console. The console repo `C:\Users\tinei\hue-switch-console` owns the contract:
 
 - `docs/device-api.md`: endpoints, auth, payloads, error codes. Authoritative.
-- `docs/definiciones.md`: product model (recipes, channels, pages).
+- `docs/definitions.md`: product model (recipes, channels, pages).
 - `docs/changelog.md`: user-facing release notes (this product's section).
 - `docs/specs/`: cross-repo specs, each with a checklist per repo.
 
@@ -79,7 +79,7 @@ Recipes are assigned in the web console, not on the circle.
 ## Code conventions
 
 - Arduino `.ino` + small `.h` files; no PlatformIO unless asked
-- English identifiers; comments in Spanish if they explain intent
+- English everywhere: identifiers, comments, docs, specs, README, commit messages. Translate Spanish you touch
 - Screen copy in **English**
 - Hue API: local HTTPS Clip v2, not the cloud
 - `setInsecure()` only against the Hue Bridge. Verify TLS to `hue.tineira.com`

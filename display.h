@@ -4,7 +4,7 @@
 #include <SPI.h>
 #include "driver/gpio.h"
 
-// Round Display for XIAO: GC9A01 240×240. Pines Seeed (no User_Setup global).
+// Round Display for XIAO: GC9A01 240×240. Seeed pins (no global User_Setup).
 
 static const int16_t kScreenW = 240;
 static const int16_t kScreenH = 240;
@@ -23,8 +23,8 @@ inline constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// D6 = GPIO43 = U0TXD. Pull-up R18 en el Round: si el pad flota, el BL queda ON.
-// analogWrite (LEDC) + hold para que UART no lo vuelva a HIGH.
+// D6 = GPIO43 = U0TXD. Pull-up R18 on the Round: if the pad floats, the backlight stays ON.
+// analogWrite (LEDC) + hold so the UART does not drive it HIGH again.
 inline void displayBl(bool on) {
   const gpio_num_t pin = static_cast<gpio_num_t>(kPinLcdBl);
   gpio_hold_dis(pin);
@@ -86,7 +86,7 @@ inline void displayTextCenter(const char *s, int16_t cy, uint8_t size, uint16_t 
   gLcd->print(s);
 }
 
-// Recorta con '.' al final. Devuelve false si ni 8 caracteres entran (omitir escena).
+// Truncates with '.' at the end. Returns false if not even 8 characters fit (skip the scene).
 inline bool displayTextEllipsis(const char *s, int16_t cy, uint8_t size, uint16_t color, int16_t maxW,
                                uint8_t minChars = 1) {
   if (!gDisplayOk || !gLcd || !s || !s[0] || maxW < 6) {

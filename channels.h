@@ -6,8 +6,8 @@
 #include "pages.h"
 #include "recipes.h"
 
-// Round no declara GPIO. channels[] del registro va vacío.
-// BOOT físico (GPIO 0, 3 s) sigue siendo re-pair Hue, no receta.
+// Round declares no GPIO. The register's channels[] is empty.
+// Physical BOOT (GPIO 0, 3 s) is still Hue re-pair, not a recipe.
 
 static const int kBootPin = 0;
 static const unsigned long kDebounceMs = 50;

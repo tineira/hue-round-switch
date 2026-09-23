@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Extrae campos de JSON compacto (Clip v2 / consola). No es un parser completo.
+// Extracts fields from compact JSON (Clip v2 / console). Not a full parser.
 
 inline void jsonAppendEscaped(String &out, const char *s) {
   out += '"';
@@ -95,7 +95,7 @@ inline bool jsonHasKey(const char *json, const char *key) {
   return strstr(json, needle) != nullptr;
 }
 
-// Puntero al '{' del objeto, o nullptr si falta / es null.
+// Pointer to the object's '{', or nullptr if missing / null.
 inline const char *jsonObjectPtr(const char *json, const char *objKey) {
   if (!json || !objKey) {
     return nullptr;
@@ -183,7 +183,7 @@ inline bool jsonHueOn(const char *json, bool *on) {
   return false;
 }
 
-// Clip v2 scene: status.active es inactive | static | dynamic_palette.
+// Clip v2 scene: status.active is inactive | static | dynamic_palette.
 inline bool jsonHueSceneActive(const char *json, bool *active) {
   if (!json || !active) {
     return false;
@@ -212,7 +212,7 @@ inline bool jsonHueSceneActive(const char *json, bool *active) {
   return true;
 }
 
-// Fuente 5×7: ñ→n, tildes fuera. El círculo no pinta UTF-8.
+// 5×7 font: ñ→n, accents dropped. The circle does not paint UTF-8.
 inline void asciiFold(char *dst, size_t dstSz, const char *src) {
   if (!dst || dstSz == 0) {
     return;
@@ -313,7 +313,7 @@ inline bool jsonHueBrightness(const char *json, int *pct) {
   return true;
 }
 
-// Rid cuya pareja rtype coincide (p. ej. grouped_light en services[]).
+// Rid whose paired rtype matches (e.g. grouped_light in services[]).
 inline bool jsonFindRidByRtype(const char *json, const char *rtype, char *out, size_t outSz) {
   if (!json || !rtype || !out || outSz < 2) {
     return false;
@@ -496,7 +496,7 @@ inline bool jsonStringField(const String &body, const char *key, String *out) {
   return true;
 }
 
-// Recibe el cuerpo HTTP (chunked ya decodificado) y entrega cada objeto de data[].
+// Receives the HTTP body (chunked already decoded) and hands over each object of data[].
 class JsonDataSink : public Stream {
  public:
   static const size_t kMaxObj = 20480;

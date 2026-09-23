@@ -12,12 +12,12 @@
 #define HUE_APP_KEY ""
 #endif
 
-// IP y application key en runtime (mDNS / NVS / emparejado).
+// IP and application key at runtime (mDNS / NVS / pairing).
 extern String gHueBridgeIp;
 extern String gHueAppKey;
 
-// Copia corta bajo mutex: el re-pair USB y HUECLR escriben estas String
-// desde otro contexto que hueHttp.
+// Short copy under a mutex: USB re-pair and HUECLR write these Strings
+// from a different context than hueHttp.
 inline SemaphoreHandle_t gHueStrMux = nullptr;
 
 inline void hueStrEnsure() {
@@ -57,9 +57,9 @@ inline bool hueRamReady() {
   return ok;
 }
 
-// 401/403 con la application key: la key ya no sirve. RAM, se pierde al boot.
-// Discovery o /api/config (sin key) no cuentan. Un 200 con key recupera.
-// Timeout, 5xx o Bridge caído no ponen ni quitan la bandera.
+// 401/403 with the application key: the key no longer works. RAM, lost at boot.
+// Discovery or /api/config (no key) do not count. A 200 with the key recovers.
+// Timeout, 5xx or Bridge down neither set nor clear the flag.
 inline volatile bool gHueAuthRejected = false;
 inline unsigned long gHueAuthGraceUntil = 0;
 
@@ -88,8 +88,8 @@ inline void hueNoteAuth(int code, const String *body, bool withKey) {
   }
 }
 
-// El Bridge usa un certificado propio; Clip v2 exige HTTPS local.
-// setInsecure() evita validar esa CA (solo LAN, no cloud).
+// The Bridge uses a self-signed certificate; Clip v2 requires local HTTPS.
+// setInsecure() skips validating that CA (LAN only, not cloud).
 
 inline int hueHttp(const String &url, const char *method, const char *body, String *response, bool withKey,
                    bool insecure, int timeoutMs = 8000) {
@@ -287,7 +287,7 @@ inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
   return hueGetLightState(rtype, rid, nullptr, pct);
 }
 
-// PUT de brillo. turnOn agrega on.on=true (set lights todo off). 404 se salta.
+// Brightness PUT. turnOn adds on.on=true (light set all off). 404 is skipped.
 inline bool huePutDimming(const char *rtype, const char *rid, int pct, bool turnOn) {
   if (!hueRamReady() || !rtype || !rid || !rid[0]) {
     return false;

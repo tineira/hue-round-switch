@@ -3,8 +3,8 @@
 #include <Wire.h>
 #include "display.h"
 
-// Touch Seeed Round Display: CHSC6X en 0x2E, INT en D7.
-// Si el módulo trae CST816S (0x15) el scan lo elige.
+// Seeed Round Display touch: CHSC6X at 0x2E, INT on D7.
+// If the module has a CST816S (0x15), the scan picks it.
 
 static const int kPinTouchInt = D7;
 static const uint8_t kTouchChsc = 0x2E;
@@ -12,7 +12,7 @@ static const uint8_t kTouchCst = 0x15;
 
 inline uint8_t gTouchAddr = kTouchChsc;
 inline bool gTouchFound = false;
-inline bool gTouchFullRange = false;  // true si el chip reporta 0..239
+inline bool gTouchFullRange = false;  // true if the chip reports 0..239
 inline uint8_t gTouchRawX = 0;
 inline uint8_t gTouchRawY = 0;
 
@@ -73,7 +73,7 @@ inline bool touchReadXY(int16_t *x, int16_t *y) {
   }
   uint8_t t[5] = {0};
   Wire.readBytes(t, 5);
-  // CHSC6X Seeed: t[0]==1, x=t[2], y=t[4] (a veces 0..127, no 0..239)
+  // CHSC6X Seeed: t[0]==1, x=t[2], y=t[4] (sometimes 0..127, not 0..239)
   if (t[0] == 0x01) {
     touchMapRaw(t[2], t[4], x, y);
     return true;

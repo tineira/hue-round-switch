@@ -26,7 +26,7 @@ inline bool gConsolePolledBoot = false;
 inline char gConsoleTokNvs[kConsoleTokMax] = {0};
 inline char gConsoleUrlNvs[kConsoleUrlMax] = {0};
 
-// 401 de consola, pegado en RAM. No va a NVS. Se limpia al boot.
+// Console 401, sticky in RAM. Not stored in NVS. Cleared at boot.
 inline volatile bool gConsoleAuthRejected = false;
 
 inline void consoleNoteHttp(int code) {
@@ -34,18 +34,18 @@ inline void consoleNoteHttp(int code) {
     gConsoleAuthRejected = true;
     return;
   }
-  // Timeout, -1 o Wi-Fi caído (code <= 0) no despegan el 401.
+  // Timeout, -1 or Wi-Fi down (code <= 0) do not clear the 401.
   if (code > 0) {
     gConsoleAuthRejected = false;
   }
 }
 
-// Token y URL solo vienen de NVS console (HUESET desde la consola web).
+// Token and URL only come from NVS console (HUESET from the web console).
 inline const char *consoleToken() { return gConsoleTokNvs; }
 
 inline const char *consoleUrl() { return gConsoleUrlNvs; }
 
-// Snapshot/register/GET config en tarea propia. Ready no espera 4×20 s.
+// Snapshot/register/GET config in their own task. Ready does not wait 4×20 s.
 inline portMUX_TYPE gConsoleMux = portMUX_INITIALIZER_UNLOCKED;
 inline bool gConsolePending = false;
 inline bool gConsoleWorkerBusy = false;
@@ -114,7 +114,7 @@ inline bool consoleSetToken(const char *tok) {
   prefs.putString("token", tok);
   prefs.end();
   memcpy(gConsoleTokNvs, tok, strlen(tok) + 1);
-  // HUESET token nuevo despega el 401 antes de la próxima respuesta.
+  // A new HUESET token clears the 401 before the next response.
   gConsoleAuthRejected = false;
   return true;
 }
@@ -338,7 +338,7 @@ inline void consoleApplyConfig(const char *body) {
   }
   gRecipesBidReset = false;
 
-  // No copiar recetas/páginas en el stack: HueRecipe×16 ~10 KB y loopTask son 8 KB.
+  // Do not copy recipes/pages onto the stack: HueRecipe×16 is ~10 KB and loopTask has 8 KB.
   uint32_t rev = 0;
   if (!recipesParseConfig(body, &rev)) {
     recipesLoad();

@@ -1,137 +1,137 @@
-# Round Display — reposo de pantalla
+# Round Display — screen sleep
 
-Documento de **requisitos de producto**. Cubre `hue-round-switch` (firmware, círculo) y `hue-switch-console` (timeout por aparato). `hue-simple-switch` está **fuera de alcance**.
+**Product requirements** document. Covers `hue-round-switch` (firmware, circle) and `hue-switch-console` (per-device timeout). `hue-simple-switch` is **out of scope**.
 
-No es un screensaver (reloj, widgets, animación). Es **reposo**: el disco se apaga cuando nadie lo toca, para gastar menos (luz de fondo, y en batería el resto) y no dejar un faro en la pared.
+This is not a screensaver (clock, widgets, animation). It is **sleep**: the disc turns off when nobody touches it, to use less power (backlight, and on battery everything else) and not leave a beacon on the wall.
 
-**Estado:** implementado (firmware 0.5.11+, consola `screenTimeoutSec`). Spec archivado. No es un hueco de implementación.
+**Status:** implemented (firmware 0.5.11+, console `screenTimeoutSec`). Spec archived. Not an implementation gap.
 
-Alinea `docs/pages-requirements.md` §9.1 (ajuste del display), poll §11.2 y decisión 25.
-
----
-
-## 1. Veredicto
-
-Tras **X segundos** sin toque en Ready, el círculo entra en reposo: **backlight off**, panel negro. No se pinta Ready a media tinta.
-
-El **primer contacto** (dedo abajo → lift) **solo despierta**. No dispara tap, doble, aro ni swipe. El usuario no sabe qué página está; tiene que ver el disco (nombre, fill, escena, puntos, aro) y **después** gesticular.
-
-El siguiente gesto completo, ya con la pantalla on, actúa como siempre.
-
-X lo elige el usuario en la **consola**, una vez por aparato (como el eje de swipe). **Default 30 s.**
+Aligns with the pages requirements (`hue-switch-console/docs/round-pages.md`) §9.1 (display setting), the §11.2 poll and decision 25.
 
 ---
 
-## 2. Problema
+## 1. Verdict
 
-Ready deja el GC9A01 y el BL en D6 encendidos todo el día. Eso es el gasto grande (y la luz de noche). El `loop()` y el Wi‑Fi a full suman, pero sin apagar el disco el ahorro es cosmética.
+After **X seconds** without a touch in Ready, the circle goes to sleep: **backlight off**, black panel. Ready is not painted at half brightness.
 
-Un interruptor de pared que dispara receta a ciegas, con el disco negro, cambia la página o la lámpara **equivocada**. Por eso el wake no actúa.
+The **first contact** (finger down → lift) **only wakes it**. It does not fire tap, double, ring or swipe. The user doesn't know which page is showing; they need to see the disc (name, fill, scene, dots, ring) and **then** gesture.
+
+The next complete gesture, with the screen on, acts as usual.
+
+The user chooses X in the **console**, once per device (like the swipe axis). **Default 30 s.**
 
 ---
 
-## 3. Resultado esperado
+## 2. Problem
 
-| Situación | Qué pasa |
+Ready keeps the GC9A01 and the backlight on D6 lit all day. That is the big cost (and the light at night). The `loop()` and full-power Wi‑Fi add up, but without turning off the disc the savings are cosmetic.
+
+A wall switch that fires a recipe blind, with the disc black, changes the **wrong** page or lamp. That's why wake does not act.
+
+---
+
+## 3. Expected result
+
+| Situation | What happens |
 | --- | --- |
-| Ready, nadie toca, pasan X s (X > 0) | Reposo: BL off, panel negro. Sin copy, sin `...`, sin reloj. |
-| Reposo, primer toque (cualquier zona, cualquier movimiento) | BL on, se pinta Ready de la **página activa** (la de NVS). Ese contacto **no** es receta ni swipe ni dimmer. Al soltar, el usuario ve dónde está. |
-| Ready despierto, tap / doble / aro / swipe | Como hoy (`input-during-hue.md` en esta carpeta, fill partido, etc.). |
-| Despierto y otra vez X s sin toque | Vuelve a reposo. |
-| X = 0 en consola | Nunca reposo (siempre on). |
-| Wi‑Fi, pairing, error, boot, loading | No entran en reposo. Hay que leer el mensaje. |
+| Ready, nobody touches it, X s pass (X > 0) | Sleep: backlight off, black panel. No copy, no `...`, no clock. |
+| Asleep, first touch (any zone, any movement) | Backlight on, Ready of the **active page** (the one in NVS) is painted. That contact is **not** a recipe, swipe or dimmer. On lift, the user sees where they are. |
+| Ready awake, tap / double / ring / swipe | As usual (`input-during-hue.md` in this folder, split fill, etc.). |
+| Awake and again X s without a touch | Back to sleep. |
+| X = 0 in the console | Never sleeps (always on). |
+| Wi‑Fi, pairing, error, boot, loading | Do not sleep. The message must be readable. |
 
-El timer de inactividad se **reinicia** con cualquier toque, incluido el de wake.
+The inactivity timer **restarts** on any touch, including the wake one.
 
-El contacto de wake **no** abre la ventana de doble tap. Un tap justo después del lift de wake es un tap nuevo, no el segundo golpe de un doble.
+The wake contact does **not** open the double-tap window. A tap right after the wake lift is a new tap, not the second half of a double.
 
-BOOT hold 3 s (re-pair) sigue vivo en reposo: es GPIO, no receta de pantalla.
+BOOT hold 3 s (re-pair) stays live while asleep: it's a GPIO, not a screen recipe.
 
 ---
 
-## 4. Consola
+## 4. Console
 
-Ajuste del **display** (una vez por Round, junto a Page swipe), no por página.
+**Display** setting (once per Round, next to Page swipe), not per page.
 
-- **Screen timeout** — segundos de inactividad hasta reposo.
+- **Screen timeout** — seconds of inactivity until sleep.
 - Default **30**.
-- **0** = Off (la pantalla no se apaga).
-- Entero. Rango válido: **0** o **10–600**. Fuera de rango lo rechaza el server (o lo clampa en firmware al bajar: 0 o 10–600, default 30).
-- Copy en inglés, p. ej. label `Screen timeout`, hint `Seconds until the display sleeps. 0 = always on.`
-- Simple-switch: no se muestra.
+- **0** = Off (the screen never turns off).
+- Integer. Valid range: **0** or **10–600**. Out of range is rejected by the server (or clamped in firmware on receipt: 0 or 10–600, default 30).
+- English copy, e.g. label `Screen timeout`, hint `Seconds until the display sleeps. 0 = always on.`
+- Simple switch: not shown.
 
-Se guarda con el resto de páginas (Save pages / el PUT que ya persiste `pageSwipeAxis`). Sube `rev`. Baja en el poll de config.
+Saved with the rest of the pages (Save pages / the PUT that already persists `pageSwipeAxis`). Bumps `rev`. Delivered in the config poll.
 
-Campo JSON (camelCase, junto a `pageSwipeAxis`):
+JSON field (camelCase, next to `pageSwipeAxis`):
 
 ```text
 screenTimeoutSec: 30
 ```
 
-Persistencia consola: columna (o equivalente) en `switches`, p. ej. `screen_timeout_sec integer not null default 30`. Aparatos viejos sin columna → 30.
+Console persistence: a column (or equivalent) on `switches`, e.g. `screen_timeout_sec integer not null default 30`. Old devices without the column → 30.
 
-El firmware guarda el valor en NVS con el resto de ajustes del display. Si el poll no trae el campo, se queda el NVS / 30.
-
----
-
-## 5. Firmware (comportamiento)
-
-### 5.1 Entrar en reposo
-
-Solo desde **Ready** (o Empty, si no hay páginas: igual negro, igual wake para ver el vacío). Reloj de inactividad = último lift (o último sample de drag) + `screenTimeoutSec`.
-
-Si `screenTimeoutSec == 0`, no arrancar el reloj.
-
-Al entrar: BL D6 LOW (o el sleep del GC9A01 + BL off). No redibujar Ready. No `UI_BUSY`. No texto.
-
-### 5.2 En reposo
-
-- No GET de on/brillo/escena cada ~20 s.
-- No redibujar el disco.
-- Seguir pudiendo notar el INT de CHSC6X (D7) para despertar.
-- Poll de consola (1 h) puede correr: no pinta el círculo. Si cambia config, aplicar en NVS; el disco sigue negro hasta wake.
-- Worker Hue: no encolar refresh de página. Un PUT in-flight de un gesto *anterior* puede terminar; no pinta sobre negro.
-
-No deep-sleep del ESP. No `WiFi.disconnect()`. Modem sleep (`setSleep(true)` en reposo, `false` al despertar) es **permitido**, no obligatorio en v1. Lo obligatorio es apagar el BL.
-
-### 5.3 Wake (primer contacto)
-
-1. INT o primer punto en el círculo.
-2. BL on, `uiPaint` Ready de la página activa.
-3. Marcar ese gesto como **wake**: hasta el lift, no `uiFireEvent`, no `uiDimPut`, no `pagesNext`/`pagesPrev`.
-4. Al lift: timer de inactividad a cero. Listo para el **siguiente** gesto.
-
-Refresh de estado Hue (on, brillo, escena, fill partido) en **background** al despertar, igual que al cambiar de página. El usuario ve al menos nombre + último fill local; el GET corrige.
-
-### 5.4 Gestos después del wake
-
-Igual que Ready hoy. Tap/doble/aro/swipe y last-wins de HTTP no cambian.
-
-### 5.5 Qué no es esto
-
-- No es hold de receta.
-- No es un tap que “a veces” actúa (si el disco ya estaba on, el tap actúa; si estaba en reposo, no).
-- No es atenuar el fill y dejar el BL a full.
+The firmware stores the value in NVS with the rest of the display settings. If the poll doesn't carry the field, NVS / 30 stays.
 
 ---
 
-## 6. Fuera de alcance (v1)
+## 5. Firmware (behavior)
 
-- Reloj, widgets, animación de reposo.
-- PWM de BL en varios escalones (on / dim / off). v1 es on u off.
-- Deep sleep del S3, apagar Wi‑Fi, wake por timer de Hue.
-- Timeout distinto por página.
+### 5.1 Going to sleep
+
+Only from **Ready** (or Empty, if there are no pages: also black, also wake to see the empty state). Inactivity clock = last lift (or last drag sample) + `screenTimeoutSec`.
+
+If `screenTimeoutSec == 0`, don't start the clock.
+
+On entry: backlight D6 LOW (or GC9A01 sleep + backlight off). Don't redraw Ready. No `UI_BUSY`. No text.
+
+### 5.2 While asleep
+
+- No on/brightness/scene GET every ~20 s.
+- No redrawing the disc.
+- Still able to notice the CHSC6X INT (D7) to wake.
+- The console poll (1 h) may run: it doesn't paint the circle. If the config changed, apply it to NVS; the disc stays black until wake.
+- Hue worker: don't queue page refreshes. An in-flight PUT from an *earlier* gesture may finish; it doesn't paint over black.
+
+No ESP deep sleep. No `WiFi.disconnect()`. Modem sleep (`setSleep(true)` while asleep, `false` on wake) is **allowed**, not required in v1. What is required is turning off the backlight.
+
+### 5.3 Wake (first contact)
+
+1. INT or first point on the circle.
+2. Backlight on, `uiPaint` Ready of the active page.
+3. Mark that gesture as **wake**: until the lift, no `uiFireEvent`, no `uiDimPut`, no `pagesNext`/`pagesPrev`.
+4. On lift: inactivity timer to zero. Ready for the **next** gesture.
+
+Hue state refresh (on, brightness, scene, split fill) in the **background** on wake, same as on page change. The user sees at least the name + last local fill; the GET corrects it.
+
+### 5.4 Gestures after wake
+
+Same as Ready. Tap/double/ring/swipe and HTTP last-wins don't change.
+
+### 5.5 What this is not
+
+- It's not a recipe hold.
+- It's not a tap that "sometimes" acts (if the disc was already on, the tap acts; if it was asleep, it doesn't).
+- It's not dimming the fill while leaving the backlight at full.
+
+---
+
+## 6. Out of scope (v1)
+
+- Clock, widgets, sleep animation.
+- Multi-step backlight PWM (on / dim / off). v1 is on or off.
+- S3 deep sleep, turning off Wi‑Fi, waking on a Hue timer.
+- A different timeout per page.
 - `hue-simple-switch`.
-- Medir mA en este documento (sí conviene medirlo al implementar).
+- Measuring mA in this document (worth measuring when implementing).
 
 ---
 
-## 7. Criterio de hecho
+## 7. Definition of done
 
-- En la consola, un Round tiene **Screen timeout** (default 30, 0 = always on), se guarda y baja en el poll.
-- Con timeout 30, Ready sin toque ~30 s → disco negro.
-- Primer toque en negro → se ve la página activa; **no** cambia luces ni página.
-- El toque siguiente (ya despierto) sí actúa.
-- Timeout 0 → no se apaga.
-- Pairing / error / Wi‑Fi no se apagan solos.
-- Simple-switch y el resto de gestos Ready no cambian de significado cuando la pantalla ya está on.
+- In the console, a Round has **Screen timeout** (default 30, 0 = always on); it is saved and delivered in the poll.
+- With timeout 30, Ready without a touch for ~30 s → black disc.
+- First touch on black → the active page is shown; it does **not** change lights or page.
+- The next touch (already awake) does act.
+- Timeout 0 → never turns off.
+- Pairing / error / Wi‑Fi don't turn off by themselves.
+- The Simple switch and the rest of the Ready gestures don't change meaning when the screen is already on.

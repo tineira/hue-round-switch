@@ -83,7 +83,7 @@ inline void improvSend(uint8_t type, const uint8_t *data, uint8_t len) {
   }
   pkt[n] = (uint8_t)(sum & 0xFF);
   pkt[n + 1] = '\n';
-  // Sin Serial.flush(): en HWCDC puede colgar el TX hasta que el host lea.
+  // No Serial.flush(): on HWCDC it can hang TX until the host reads.
   Serial.write(pkt, n + 2);
 }
 
@@ -141,8 +141,8 @@ inline void improvStartScan() {
     improvSendRpcStrings(IMPROV_CMD_SCAN, nullptr, 0);
     return;
   }
-  // ACK de estado ya: scanNetworks/mode pueden bloquear el CDC y el wizard
-  // ve 4s de silencio. El scan arranca en el siguiente usbPoll.
+  // Acknowledge the state now: scanNetworks/mode can block the CDC and the wizard
+  // sees 4 s of silence. The scan starts on the next usbPoll.
   gImprovScanPending = true;
   gImprovScanStarted = false;
   gImprovScanDefer = true;
@@ -150,8 +150,8 @@ inline void improvStartScan() {
   improvSendState(improvCurrentState());
 }
 
-// Lanza el scan async. STA puede estar en WiFi.begin() desde el boot: hay que
-// cortar el intento (sin borrar NVS) o scanNetworks falla todo el rato.
+// Start the async scan. STA may be in WiFi.begin() since boot: the attempt
+// must be cut (without erasing NVS) or scanNetworks keeps failing.
 inline void improvKickScan() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -179,7 +179,7 @@ inline void improvFlushScan() {
   if (n == WIFI_SCAN_RUNNING) {
     return;
   }
-  // FAILED (o 0 muy pronto): reintentar cada ~400 ms hasta 15 s, sin quedarse quieto.
+  // FAILED (or 0 too early): retry every ~400 ms for up to 15 s, never sitting idle.
   if ((n == WIFI_SCAN_FAILED || (n == 0 && elapsed < 3000UL)) && elapsed < 15000UL) {
     if (millis() - gImprovScanKickAt >= 400UL) {
       improvKickScan();
@@ -362,7 +362,7 @@ inline void nvsCopyStr(Preferences &prefs, const char *key, char *out, size_t ca
   out[n] = 0;
 }
 
-// SSID guardado en la STA (NVS del driver), tambien con el radio caido. No el de config.h.
+// SSID saved in the STA (driver NVS), even with the radio down. Not the one from config.h.
 inline void staSavedSsid(char *out, size_t cap) {
   out[0] = 0;
   if (!cap) {

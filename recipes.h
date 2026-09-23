@@ -5,7 +5,7 @@
 #include "json_util.h"
 #include "pages.h"
 
-// Recetas en NVS (clave distinta a páginas). El dedo solo mira esto, nunca Vercel.
+// Recipes in NVS (a different key from pages). The finger only reads this, never Vercel.
 
 static const uint8_t kMaxRecipes = 16;
 static const uint8_t kMaxScenes = 8;
@@ -375,7 +375,7 @@ inline bool recipeIsChildLight(const HueRecipe *r) {
           strcmp(r->action, "off") == 0);
 }
 
-// Tap y doble son dos luces hijas distintas: fill partido, estado por rid.
+// Tap and double are two different child lights: split fill, state per rid.
 inline bool recipesTwoChildLights(const char *pageId, const HueRecipe **tap, const HueRecipe **dbl) {
   const HueRecipe *a = recipesFind(pageId, "short");
   const HueRecipe *b = recipesFind(pageId, "double_click");

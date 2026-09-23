@@ -1,6 +1,6 @@
 #pragma once
 
-// SERIAL_DEBUG en config.h (0 = sin USB log). Serial.begin va siempre (Improv / HUESET).
+// SERIAL_DEBUG in config.h (0 = no USB log). Serial.begin always runs (Improv / HUESET).
 #ifndef SERIAL_DEBUG
 #define SERIAL_DEBUG 0
 #endif

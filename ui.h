@@ -8,7 +8,7 @@
 #include "recipes.h"
 #include "touch.h"
 
-// Copy en inglés. Ready no enseña gestos.
+// English copy. Ready does not teach gestures.
 
 enum UiScreen {
   UI_BOOT = 0,
@@ -73,7 +73,7 @@ inline bool gSecondTap = false;
 inline unsigned long gTapWaitMs = 0;
 inline bool gSceneHave = false;
 inline char gSceneName[25] = {0};
-inline bool gScreenIdle = false;  // BL off; el primer toque solo despierta
+inline bool gScreenIdle = false;  // Backlight off; the first touch only wakes
 inline bool gIdleWakeHold = false;
 inline unsigned long gIdleLastMs = 0;
 
@@ -158,7 +158,7 @@ inline void uiFillDiscSide(bool right, int16_t radius, uint16_t color) {
   }
 }
 
-// fillArc: 0° = 3 o'clock, horario. El aro de brillo va de 135° a 135+270°.
+// fillArc: 0° = 3 o'clock, clockwise. The brightness ring runs from 135° to 135+270°.
 inline bool uiTouchToPct(int16_t x, int16_t y, int *pct) {
   if (!pct) {
     return false;

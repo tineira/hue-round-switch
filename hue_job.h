@@ -8,7 +8,7 @@
 #include "recipes.h"
 #include "hue_discover.h"
 
-// Un slot last-wins. HTTP Clip v2 y el re-pair de HUEPAIR corren aqui, no en loop()/touch.
+// One last-wins slot. Clip v2 HTTP and the HUEPAIR re-pair run here, not in loop()/touch.
 
 enum HueJobKind : uint8_t {
   HUE_JOB_NONE = 0,
@@ -333,7 +333,7 @@ inline int hueJobClampPct(int pct) {
   return pct;
 }
 
-// Brillo del destino de aro (grupo o luces), para pintar el anillo tras una escena.
+// Brightness of the ring target (group or lights), to paint the ring after a scene.
 inline void hueJobReadPageDim(const HueJob &job, HueJobResult *out) {
   if (!out) {
     return;
@@ -655,6 +655,6 @@ inline void hueJobBegin() {
     return;
   }
   hueStrEnsure();
-  // Re-pair: mDNS + POST 90 s. Mas pila que un PUT de receta.
+  // Re-pair: mDNS + POST 90 s. More stack than a recipe PUT.
   xTaskCreatePinnedToCore(hueJobTask, "hueJob", 24576, nullptr, 1, &gHueTask, 0);
 }

@@ -5,19 +5,19 @@
 #include "hue.h"
 #include "json_util.h"
 
-// Descubrir el Bridge (mDNS _hue._tcp) y emparejar la application key.
-// IP y key se guardan en NVS para que un cambio de DHCP no pida recompilar.
+// Discover the Bridge (mDNS _hue._tcp) and pair the application key.
+// IP and key are saved in NVS so a DHCP change does not require a rebuild.
 
 static const unsigned long kPairTimeoutMs = 90000;
 static const unsigned long kLongPressMs = 3000;
 
-// El .ino cuelga el pulso de la pantalla durante el POST de emparejado.
+// The .ino hooks the screen pulse in during the pairing POST.
 inline void (*gOnHueWait)() = nullptr;
 inline void (*gOnHuePairing)(bool pairing) = nullptr;
 
 inline String gHueBridgeId;
 
-// HUEPAIR corre en la tarea hueJob. Estas banderas las mira el parser USB.
+// HUEPAIR runs in the hueJob task. The USB parser reads these flags.
 inline volatile bool gHuePairAsync = false;
 inline volatile bool gHuePairBusy = false;
 inline volatile bool gHuePairReq = false;
@@ -101,7 +101,7 @@ inline void hueLoadStore() {
   hueStrUnlock();
 }
 
-// Solo la application key guardada. IP y bridge id siguen para el discover.
+// Only the saved application key. IP and bridge id stay for discovery.
 inline void hueClearSavedKey() {
   hueSetAppKey("");
   Preferences prefs;
@@ -284,7 +284,7 @@ inline void hueBlink(unsigned long ms) {
   digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
 }
 
-// POST /api hasta que pulsen el botón del Bridge (o timeout).
+// POST /api until the Bridge button is pressed (or timeout).
 inline bool huePairAppKey() {
   hueStrLock();
   const String ip = gHueBridgeIp;
@@ -294,7 +294,7 @@ inline bool huePairAppKey() {
   }
 
   LOGLN("Pairing: press the Bridge link button");
-  // En async la pantalla la pinta el loop. Desde esta tarea no se toca el TFT ni el CDC.
+  // In async mode the loop paints the screen. This task never touches the TFT or the CDC.
   if (!gHuePairAsync && gOnHuePairing) {
     gOnHuePairing(true);
   }
@@ -313,7 +313,7 @@ inline bool huePairAppKey() {
     String user;
     if (jsonStringField(body, "username", &user) && hueLooksLikeKey(user)) {
       hueSetAppKey(user);
-      // Igual que simple: 20 s para que un 401 inmediato no deje No Bridge pegado.
+      // Same as Simple: 20 s so an immediate 401 does not leave No Bridge stuck.
       hueAuthGraceArm(20000);
       digitalWrite(LED_BUILTIN, HIGH);
       LOGLN("Paired (key stored in flash)");
@@ -383,7 +383,7 @@ inline bool hueRePair() {
   if (!gHuePairCancel && hueFindBridge() && !gHuePairCancel && huePairAppKey() && !gHuePairCancel) {
     hueSaveStore();
     hueKeyWorks();
-    // El POST ya entregó la key. Un GET de comprobación fallido no devuelve la pantalla a “sin Bridge”.
+    // The POST already delivered the key. A failed check GET does not send the screen back to "no Bridge".
     ok = !gHuePairCancel && hueLooksLikeKey(gHueAppKey);
   }
   if (gHuePairCancel) {

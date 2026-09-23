@@ -1,157 +1,157 @@
-# Round Display — toques mientras Hue responde
+# Round Display — touches while Hue answers
 
-Documento de **requisitos de producto**. Cubre `hue-round-switch` (firmware, círculo). No es una guía de implementación ni un changelog.
+**Product requirements** document. Covers `hue-round-switch` (firmware, circle). Not an implementation guide or a changelog.
 
-La consola (`hue-switch-console`) y `hue-simple-switch` están **fuera de alcance**. El círculo no espera a Vercel; este documento trata el **Bridge local** (Clip v2 HTTPS en LAN).
+The console (`hue-switch-console`) and `hue-simple-switch` are **out of scope**. The circle doesn't wait for Vercel; this document is about the **local Bridge** (Clip v2 HTTPS on the LAN).
 
-Cierra el hueco de `docs/pages-requirements.md` §8.1 y §13: el GET+PUT al Bridge **sí ocurre**, pero **el disco no se congela** mientras tanto.
+Closes the gap in the pages requirements (`hue-switch-console/docs/round-pages.md`) §8.1 and §13: the GET+PUT to the Bridge **does happen**, but **the disc does not freeze** meanwhile.
 
-**Estado:** implementado. Firmware **0.5.8** saca GET/PUT de receta, dimmer y refresh del `loop()` (`hue_job.h`: un slot last-wins en tarea propia). Firmware **0.5.14+** saca snapshot / register / poll de consola del loop de toque. `hueHttp()` sigue síncrono, pero en esas tareas, no en Ready. Pairing / discover / re-pair BOOT 3 s pueden seguir en el loop. `pages-requirements.md` §8.1 / §13 / decisión 23 apuntan aquí.
-
----
-
-## 1. Veredicto
-
-**Seguir aceptando toques.** Un tap, doble tap o soltar el aro **no** bloquea Ready. Un segundo gesto es un comando nuevo, no “espera a que las lámparas terminen”.
-
-**No bloquear la pantalla.** No entrar a `UI_BUSY`, no pintar `...`, no textos de espera ni de ayuda. El ack es lo que Ready ya sabe pintar: invert al apretar el centro, fill on/off, nombre de escena, aro en vivo.
-
-**Último comando gana.** No hace falta una cola larga de gestos. Si llega otro tap o otro soltar de aro mientras un GET/PUT sigue en vuelo, se **reemplaza** el trabajo pendiente (last-wins). El swipe de página nunca espera red.
-
-Eso es lo que hacen un Hue dimmer / Tap Dial, un Lutron Maestro y HomeKit: el control de pared sigue vivo; las luces tardan (transición CLIP ~400 ms; el Bridge limita ~10 PUT/s a `/light` y ~1/s a `/grouped_light`).
+**Status:** implemented. Firmware **0.5.8** moves recipe, dimmer and refresh GET/PUT out of `loop()` (`hue_job.h`: one last-wins slot in its own task). Firmware **0.5.14+** moves snapshot / register / console poll out of the touch loop. `hueHttp()` is still synchronous, but in those tasks, not in Ready. Pairing / discovery / BOOT 3 s re-pair may stay in the loop. `round-pages.md` §8.1 / §13 / decision 23 point here.
 
 ---
 
-## 2. Problema
+## 1. Verdict
 
-El usuario está de pie, a un brazo, tocando un círculo de 39 mm. Un tap debe sentirse como un interruptor de pared, no como un formulario que espera 201.
+**Keep accepting touches.** A tap, double tap or ring release does **not** block Ready. A second gesture is a new command, not "wait for the lamps to finish".
 
-Antes de 0.5.8 no era así:
+**Don't lock the screen.** No `UI_BUSY`, no `...`, no waiting or help text. The ack is what Ready already knows how to paint: invert on pressing the center, on/off fill, scene name, live ring.
 
-1. `hueHttp()` sigue siendo GET/PUT síncrono en el `loop()` (timeouts 2,5–8 s). `recipeFire()` y `uiDimPut()` salen de `uiPollTouch()` / `uiTick()`. No hay cola ni tarea Hue.
-2. CHSC6X no entrega IDs de gesto. Tap, doble (`kDoubleTapMs` = 350, `gSecondTap` al segundo down, fire al lift), swipe (≥40 px) y lift se infieren en `uiPollTouch` / `uiTick`. Si el loop está dentro de HTTP, esos FSM **no corren**: el siguiente toque se pierde.
-3. Grupo + `dim` ya están en firmware: un ciclo de escenas es GET `status.active` (2500 ms) por candidata y luego PUT; un aro `PAGE_DIM_LIGHTS` es GET por rid y PUT a las on. Eso **alarga** el bloqueo, no lo saca del loop.
-4. `UI_BUSY` (pinta `...` y pulso de aro) **existe** y **no se entra** desde tap, doble, dimmer ni swipe. No hay que usarlo en Ready.
-5. El invert del centro se limpia al lift **antes** de `recipeFire()`. El fill on/off y el nombre de escena se pintan **después** de un HTTP ok (`uiSetLightOn` / `uiApplyLastSceneName`). No hay ack optimista: durante el PUT el disco queda en Ready quieto.
-6. `gOnHueWait` bombea `uiTick` solo en el wait de **pairing** (`hue_discover.h`), no en GET/PUT de receta. `uiTick` no llama `uiPollTouch`. No cuenta como “Ready vivo”.
-7. Tras un swipe, `uiOnPageChanged` pinta ya y deja `gNeedHueState`; el GET de on/brillo/escena corre en `uiTick` cuando no hay dedo. Ese GET **sí** bloquea el loop al soltar.
+**Last command wins.** No long gesture queue is needed. If another tap or ring release arrives while a GET/PUT is still in flight, the pending work is **replaced** (last-wins). The page swipe never waits on the network.
 
-El spec de páginas exige disco vivo (`pages-requirements.md` §8.1, §13, decisión 23). Receta / aro / refresh de página salieron del loop en 0.5.8; snapshot / register / poll de consola en 0.5.14.
+That's what a Hue dimmer / Tap Dial, a Lutron Maestro and HomeKit do: the wall control stays alive; the lights take their time (CLIP transition ~400 ms; the Bridge limits ~10 PUT/s to `/light` and ~1/s to `/grouped_light`).
 
 ---
 
-## 3. Resultado esperado
+## 2. Problem
 
-En Ready, con Wi-Fi y Bridge ok:
+The user is standing, at arm's length, touching a 39 mm circle. A tap must feel like a wall switch, not a form waiting for a 201.
 
-| El usuario hace | Qué ve (al tiro) | Qué pasa con el siguiente gesto |
+Before 0.5.8 it didn't:
+
+1. `hueHttp()` was a synchronous GET/PUT in `loop()` (timeouts 2.5–8 s). `recipeFire()` and `uiDimPut()` came from `uiPollTouch()` / `uiTick()`. No queue, no Hue task.
+2. The CHSC6X doesn't deliver gesture IDs. Tap, double (`kDoubleTapMs` = 350, `gSecondTap` on the second down, fire on lift), swipe (≥40 px) and lift are inferred in `uiPollTouch` / `uiTick`. If the loop is inside HTTP, those state machines **don't run**: the next touch is lost.
+3. Group + `dim` were already in firmware: a scene cycle was a `status.active` GET (2500 ms) per candidate and then a PUT; a `PAGE_DIM_LIGHTS` ring was a GET per rid and a PUT to the ones that are on. That **lengthened** the block, it didn't move it out of the loop.
+4. `UI_BUSY` (paints `...` and a ring pulse) **exists** and is **not entered** from tap, double, dimmer or swipe. It must not be used in Ready.
+5. The center invert was cleared on lift **before** `recipeFire()`. The on/off fill and the scene name were painted **after** an HTTP ok (`uiSetLightOn` / `uiApplyLastSceneName`). No optimistic ack: during the PUT the disc sat still in Ready.
+6. `gOnHueWait` pumps `uiTick` only in the **pairing** wait (`hue_discover.h`), not in recipe GET/PUT. `uiTick` doesn't call `uiPollTouch`. It doesn't count as "Ready alive".
+7. After a swipe, `uiOnPageChanged` paints immediately and sets `gNeedHueState`; the on/brightness/scene GET runs in `uiTick` when there is no finger. That GET **did** block the loop on lift.
+
+The pages spec requires a live disc (`round-pages.md` §8.1, §13, decision 23). Recipe / ring / page refresh left the loop in 0.5.8; snapshot / register / console poll in 0.5.14.
+
+---
+
+## 3. Expected result
+
+In Ready, with Wi‑Fi and Bridge ok:
+
+| The user does | What they see (immediately) | What happens to the next gesture |
 | --- | --- | --- |
-| Tap (centro, receta `short`) | Invert al down; al lift, fill on/off y escena **locales** (sin how-to) | Otro tap, doble, aro o swipe se acepta **sin** esperar el PUT |
-| Doble tap (`double_click`) | Igual: invert, luego fill / escena / off | Igual |
-| Arrastrar el aro | El arco 270° sigue el dedo (1–100 absoluto) | Durante el drag no hay PUT. Al soltar, un PUT del **último** %. Si suelta otra vez antes de que vuelva el HTTP, gana el **último** % |
-| Swipe de página | Nombre, puntos y theme de la nueva página **al cruzar el umbral** | Nunca espera Hue. El GET de estado de la página nueva va en background |
-| Receta vacía | Nada Hue; el gesto es no-op | El loop no se bloquea |
+| Tap (center, `short` recipe) | Invert on down; on lift, **local** on/off fill and scene (no how-to) | Another tap, double, ring or swipe is accepted **without** waiting for the PUT |
+| Double tap (`double_click`) | Same: invert, then fill / scene / off | Same |
+| Drag the ring | The 270° arc follows the finger (1–100 absolute) | No PUT during the drag. On release, one PUT of the **last** %. If released again before the HTTP returns, the **last** % wins |
+| Page swipe | Name, dots and theme of the new page **as the threshold is crossed** | Never waits for Hue. The new page's state GET runs in the background |
+| Empty recipe | Nothing Hue; the gesture is a no-op | The loop doesn't block |
 
-Tras un PUT **ok**: el fill y el nombre de escena ya pintados en local se quedan. Un poll posterior (~20 s) o el GET de fondo al cambiar de página puede corregir si el Bridge discrepa.
+After a **successful** PUT: the fill and scene name already painted locally stay. A later poll (~20 s) or the background GET on page change may correct them if the Bridge disagrees.
 
-Tras un PUT **fallido** (timeout, 4xx, Wi-Fi down): pantalla de error como hoy, un rato, y vuelta a Ready. No se queda un `...` eterno.
+After a **failed** PUT (timeout, 4xx, Wi‑Fi down): error screen as before, for a moment, then back to Ready. No endless `...`.
 
-Nada de esto pinta copy nueva en Ready. Siguen prohibidos `Tap to toggle`, `Please wait`, `...` de `UI_BUSY`, y cualquier spinner de texto.
-
----
-
-## 4. Política de input (cerrada)
-
-1. **Ready nunca se congela** por un GET/PUT de receta o dimmer. `uiPollTouch` / `uiTick` (o el equivalente que infiera gestos) siguen corriendo.
-2. **Last-wins**, no ignore-during-inflight y no cola FIFO. Un tap nuevo sustituye el PUT de receta que aún no salió o que sigue en vuelo. Un segundo soltar de aro sustituye el brillo pendiente. No se “acumulan” tres taps para ejecutarlos en serie cuando Hue libere.
-3. **Un PUT de dimmer por soltar**, no uno por sample del drag. Eso ya es así (`gBriLastSent`); se mantiene. Si el % no cambió, no hay PUT.
-4. **Swipe > HTTP.** Cambiar de página pinta ya. Si había un PUT de la página anterior en vuelo, se cancela o se deja morir sin aplicar su ack a la página nueva. El GET de on/brillo/escena de la página nueva es background.
-5. **Ack optimista.** Invert = down en el centro. Fill on/off y nombre de escena = resultado **local** de la receta (ciclo: el `rid` que se va a PUT; off: fill apagado y sin línea de escena). El aro en drag = ack de brillo. No hay ack extra de “HTTP en curso”.
-6. **`UI_BUSY` no es de Ready.** Sigue para pairing / loading si hace falta. No se entra desde tap, doble, dimmer ni ciclo de escenas.
-7. **El Bridge sigue siendo la verdad** de “qué escena está activa” y de on/brillo, en background. El dedo no espera esa verdad para el **siguiente** gesto.
-8. **Límites Hue.** No martillar el Bridge: un comando en vuelo a la vez hacia Clip v2 desde este aparato (el last-wins ya serializa). No un PUT por pixel del aro.
-9. **Timeouts.** Siguen existiendo (hoy 2500 / 4000 / 8000 ms). Si vencen, error de sistema, no un Ready congelado hasta el timeout: el usuario ya pudo haber hecho otro gesto.
-10. **Sin hold de receta.** BOOT hold 3 s (re-pair) no cambia. Re-pair puede bloquear: no es un gesto de Ready.
+None of this paints new copy in Ready. `Tap to toggle`, `Please wait`, the `UI_BUSY` `...`, and any text spinner stay forbidden.
 
 ---
 
-## 5. Cambios que hay que hacer
+## 4. Input policy (closed)
 
-Solo firmware (`hue-round-switch`). La consola no llama al Bridge. El poll de config (Vercel) no entra en esta feature.
-
-### 5.1 Desacoplar Hue del loop de toque
-
-Hoy GET/PUT de receta y dimmer corren en el mismo `loop()` que lee CHSC6X. Hay que **sacarlos de ese camino**.
-
-Resultado: mientras un GET/PUT está en el cable, el aparato sigue infiriendo down / move / lift / swipe / ventana de doble tap.
-
-Cómo (tarea, cola de un slot, HTTP no bloqueante) lo decide la implementación. El requisito es el comportamiento, no la API de FreeRTOS.
-
-No copiar `HueRecipe[]` / `Page[]` en el stack del loop (sigue valiendo el límite de 8 KB / `SET_LOOP_TASK_STACK_SIZE`).
-
-### 5.2 Recetas (tap / doble)
-
-`uiFireEvent` / `recipeFire` no deben `return` después de un `hueHttp()` síncrono que haya dejado el touch muerto.
-
-Al disparar el gesto:
-
-- Actualizar fill y escena **antes o al mismo tiempo** que se encola el HTTP, con el resultado local (on/off, siguiente `rid` de la lista). Hoy eso ocurre **después** del 200; hay que adelantarlo.
-- Encolar **un** trabajo: la receta de la **página activa** y el evento. Si ya hay uno, el nuevo **lo reemplaza**.
-- El ciclo de escenas puede seguir haciendo GET `status.active` + PUT al siguiente `rid` (páginas §8.1). Ese GET+PUT no corre en el loop de toque.
-
-### 5.3 Aro
-
-Sin cambio de producto: PUT al soltar, last % wins, skip si `gBriLastSent` igual.
-
-Sí cambia el runtime: `uiDimPut` no bloquea el loop. Un soltar durante un PUT anterior sustituye el % (o se ignora si es el mismo). `mode: lights` (GET por rid + PUT a las on) también fuera del loop de toque.
-
-### 5.4 Swipe y poll de estado
-
-Al swipe: pintar ya (`uiOnPageChanged`). El `gNeedHueState` GET de on/brillo/escena **no** se hace dentro del gesto. Si un PUT de la página anterior sigue vivo, no debe pintar fill/escena de esa página sobre la nueva.
-
-El poll ~20 s de Ready puede seguir; tampoco debe bloquear el toque.
-
-### 5.5 Error
-
-Si el trabajo en vuelo falla y el usuario **no** ha cambiado de página ni disparado otro comando que lo reemplace: `UI_ERROR` como hoy y vuelta a Ready. Si ya hay un comando más nuevo, el fallo del viejo no pisa el ack del nuevo.
-
-### 5.6 Spec de páginas — hecho
-
-`pages-requirements.md` y `hue-switch-console/docs/round-pages.md` ya dicen que el GET+PUT ocurre y el círculo no se congela. No hace falta reescribirlos salvo alinear un detalle nuevo.
+1. **Ready never freezes** on a recipe or dimmer GET/PUT. `uiPollTouch` / `uiTick` (or whatever infers gestures) keep running.
+2. **Last-wins**, not ignore-during-inflight and not a FIFO queue. A new tap replaces the recipe PUT that hasn't gone out yet or is still in flight. A second ring release replaces the pending brightness. Three taps are not "accumulated" to run in series when Hue frees up.
+3. **One dimmer PUT per release**, not one per drag sample. That is already the case (`gBriLastSent`); it stays. If the % didn't change, there's no PUT.
+4. **Swipe > HTTP.** Changing page paints immediately. If a PUT from the previous page is in flight, it is cancelled or left to die without applying its ack to the new page. The new page's on/brightness/scene GET is background.
+5. **Optimistic ack.** Invert = down on the center. On/off fill and scene name = the recipe's **local** result (cycle: the `rid` about to be PUT; off: fill off and no scene line). The ring while dragging = brightness ack. There is no extra "HTTP in progress" ack.
+6. **`UI_BUSY` is not for Ready.** It stays for pairing / loading if needed. Not entered from tap, double, dimmer or scene cycle.
+7. **The Bridge is still the truth** for "which scene is active" and on/brightness, in the background. The finger doesn't wait for that truth before the **next** gesture.
+8. **Hue limits.** Don't hammer the Bridge: one command in flight at a time to Clip v2 from this device (last-wins already serializes). Not one PUT per ring pixel.
+9. **Timeouts.** They still exist (2500 / 4000 / 8000 ms). If they expire: system error, not a Ready frozen until the timeout: the user may already have made another gesture.
+10. **No recipe hold.** BOOT hold 3 s (re-pair) doesn't change. Re-pair may block: it's not a Ready gesture.
 
 ---
 
-## 6. Fuera de alcance
+## 5. Changes required
 
-- Consola web, spinners de “Saving pages”, o cualquier HTTP a Vercel.
-- `hue-simple-switch` (GPIO; su máquina de double-click no se toca).
-- Eventstream Clip v2 (`/eventstream`) en v1.
-- Cola de N gestos, undo, o “tap rápido = full on” estilo Lutron Maestro (un segundo tap es **la receta de tap**, no un significado extra).
-- Animación de slide entre páginas, pulso de aro como busy en Ready, o copy nueva.
-- Medir latencia típica de este Bridge (no bloquea el veredicto).
-- Cambiar timeouts numéricos salvo que haga falta para no dejar un worker colgado.
-- Re-pair (BOOT 3 s) y pantallas de sistema (Wi-Fi, pairing, error): pueden seguir siendo síncronas.
+Firmware only (`hue-round-switch`). The console doesn't call the Bridge. The config poll (Vercel) is not part of this feature.
+
+### 5.1 Decouple Hue from the touch loop
+
+Recipe and dimmer GET/PUT ran in the same `loop()` that reads the CHSC6X. They must **leave that path**.
+
+Result: while a GET/PUT is on the wire, the device keeps inferring down / move / lift / swipe / double-tap window.
+
+How (task, one-slot queue, non-blocking HTTP) is up to the implementation. The requirement is the behavior, not the FreeRTOS API.
+
+Do not copy `HueRecipe[]` / `Page[]` onto the loop's stack (the 8 KB / `SET_LOOP_TASK_STACK_SIZE` limit still applies).
+
+### 5.2 Recipes (tap / double)
+
+`uiFireEvent` / `recipeFire` must not `return` after a synchronous `hueHttp()` that left touch dead.
+
+When firing the gesture:
+
+- Update fill and scene **before or at the same time** as the HTTP is queued, with the local result (on/off, next `rid` in the list). Previously that happened **after** the 200; it must move earlier.
+- Queue **one** job: the **active page's** recipe and the event. If one is already queued, the new one **replaces** it.
+- The scene cycle may keep doing a `status.active` GET + PUT to the next `rid` (pages §8.1). That GET+PUT does not run in the touch loop. (Later amended: the cycle uses the NVS cache, see `round-pages.md` §8.1.)
+
+### 5.3 Ring
+
+No product change: PUT on release, last % wins, skip if `gBriLastSent` is the same.
+
+The runtime does change: `uiDimPut` doesn't block the loop. A release during an earlier PUT replaces the % (or is ignored if it's the same). `mode: lights` (GET per rid + PUT to the ones that are on) also leaves the touch loop.
+
+### 5.4 Swipe and state poll
+
+On swipe: paint immediately (`uiOnPageChanged`). The `gNeedHueState` on/brightness/scene GET is **not** done inside the gesture. If a PUT from the previous page is still alive, it must not paint that page's fill/scene over the new one.
+
+The ~20 s Ready poll may stay; it must not block touch either.
+
+### 5.5 Errors
+
+If the in-flight job fails and the user has **not** changed page or fired another command that replaces it: `UI_ERROR` as before and back to Ready. If there is already a newer command, the old one's failure doesn't overwrite the new one's ack.
+
+### 5.6 Pages spec — done
+
+`hue-switch-console/docs/round-pages.md` already says the GET+PUT happens and the circle does not freeze. No rewrite needed beyond aligning a new detail.
 
 ---
 
-## 7. Relación con páginas
+## 6. Out of scope
 
-No cambia: máximo 6 páginas, tap y doble, sin hold, swipe local, página = un room/zona, `dim` §8.2 (ya en 0.5.7), listas de escenas, Ready sin how-to, ASCII, themes cerrados.
-
-El **trabajo** Hue (GET active + PUT next, dim group/lights) se queda; la **espera del usuario** no. Grupo/dim no sustituyen esta feature: las hacen más urgentes porque hay más GET en el mismo loop.
+- Web console, "Saving pages" spinners, or any HTTP to Vercel.
+- `hue-simple-switch` (GPIO; its double-click state machine is untouched).
+- Clip v2 eventstream (`/eventstream`) in v1.
+- A queue of N gestures, undo, or "quick tap = full on" à la Lutron Maestro (a second tap is **the tap recipe**, not an extra meaning).
+- Slide animation between pages, ring pulse as busy in Ready, or new copy.
+- Measuring this Bridge's typical latency (doesn't block the verdict).
+- Changing numeric timeouts unless needed so a worker doesn't hang.
+- Re-pair (BOOT 3 s) and system screens (Wi‑Fi, pairing, error): may stay synchronous.
 
 ---
 
-## 8. Criterio de hecho
+## 7. Relation to pages
 
-Esta feature está **lista** cuando, en Ready:
+Unchanged: max 6 pages, tap and double, no hold, local swipe, page = one room/zone, `dim` §8.2 (already in 0.5.7), scene lists, Ready without how-to, ASCII, closed themes.
 
-- Un tap (o doble) dispara la receta y **enseguida** se puede tap / doble / aro / swipe otra vez, aunque el PUT anterior no haya vuelto.
-- El disco no entra a `UI_BUSY` ni muestra `...` por una receta o un dimmer.
-- El invert, el fill y el nombre de escena se actualizan en local al gesto, no al 200 del Bridge.
-- El aro sigue last-wins al soltar; no hay un PUT por sample; un segundo soltar gana.
-- Un swipe cambia de página al umbral, sin esperar Hue.
-- Un PUT que tarda (o el timeout de 2,5–8 s) **no** traga el segundo toque.
-- `hue-simple-switch` y la consola no cambian.
+The Hue **work** (GET active + PUT next, dim group/lights) stays; the **user's wait** doesn't. Group/dim don't replace this feature: they make it more urgent because there are more GETs in the same loop.
 
-Hasta que el HTTP de receta, dimmer y refresh de página salga del loop de toque **y** el fill/escena se pinten en local al gesto, el círculo seguirá perdiendo toques y el ack llegará tarde. Eso es el gap; no un “busy screen” a medias. `gOnHueWait` en pairing no cierra este gap.
+---
+
+## 8. Definition of done
+
+This feature is **done** when, in Ready:
+
+- A tap (or double) fires the recipe and **right away** tap / double / ring / swipe work again, even if the previous PUT hasn't returned.
+- The disc doesn't enter `UI_BUSY` or show `...` for a recipe or a dimmer.
+- The invert, fill and scene name update locally at the gesture, not at the Bridge's 200.
+- The ring stays last-wins on release; no PUT per sample; a second release wins.
+- A swipe changes page at the threshold, without waiting for Hue.
+- A slow PUT (or the 2.5–8 s timeout) does **not** swallow the second touch.
+- `hue-simple-switch` and the console don't change.
+
+Until the recipe, dimmer and page-refresh HTTP leave the touch loop **and** the fill/scene are painted locally at the gesture, the circle will keep losing touches and the ack will arrive late. That's the gap; not a half-done "busy screen". `gOnHueWait` in pairing doesn't close this gap.

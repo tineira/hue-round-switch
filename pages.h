@@ -4,7 +4,7 @@
 #include <string.h>
 #include "json_util.h"
 
-// Páginas del círculo: NVS aparte de recetas para no pasar de 4000 B en un putString.
+// Circle pages: NVS separate from recipes so a putString stays under 4000 B.
 
 static const uint8_t kMaxPages = 6;
 static const uint8_t kPageNameMax = 12;
@@ -45,7 +45,7 @@ struct PageTheme {
   uint16_t error;
 };
 
-// Hex de docs/round-themes.html → RGB565.
+// Hex from docs/round-themes.html → RGB565.
 static constexpr uint16_t hx(uint32_t h) {
   return static_cast<uint16_t>((((h >> 16) & 0xF8u) << 8) | (((h >> 8) & 0xFCu) << 3) |
                                ((h & 0xFFu) >> 3));
@@ -130,7 +130,7 @@ inline void pagesSaveTimeout() {
   prefs.end();
 }
 
-// Campo ausente: no toca NVS / valor actual. 0 = always on; el resto se clampa a 10–600.
+// Missing field: NVS / current value untouched. 0 = always on; anything else is clamped to 10–600.
 inline bool pagesParseTimeout(const char *body) {
   if (!body || !jsonHasKey(body, "screenTimeoutSec")) {
     return false;
@@ -366,7 +366,7 @@ inline void pageParseDim(const char *obj, Page *out) {
       }
     }
   }
-  // Compat NVS viejo: dimTarget de un rid → group hasta el próximo poll.
+  // Old NVS compat: a single-rid dimTarget → group until the next poll.
   char rtype[16];
   char rid[40];
   rtype[0] = 0;
@@ -528,7 +528,7 @@ inline void pagesClear() {
   pagesSave();
 }
 
-// HUECLR: namespace vacío. La página por defecto queda solo en RAM.
+// HUECLR: empty namespace. The default page lives only in RAM.
 inline void pagesForgetSaved() {
   Preferences prefs;
   if (prefs.begin("pages", false)) {

@@ -27,7 +27,7 @@ static bool gSawHueAuthRejected = false;
 
 static void applyStickyScreens();
 
-// WiFi.SSID() está vacío hasta asociar. La red de Improv vive en la NVS de la STA.
+// WiFi.SSID() is empty until associated. The Improv network lives in the STA's NVS.
 static bool wifiHasArduinoCreds() {
   char ssid[33];
   staSavedSsid(ssid, sizeof(ssid));
@@ -121,7 +121,7 @@ static void afterWifiUp() {
 
 void setup() {
   Serial.begin(115200);
-  // USB CDC: sin PC el write() espera al host. 100 ms: 0 descartaba escrituras si tx_lock estaba ocupado.
+  // USB CDC: without a PC, write() waits for the host. 100 ms: 0 dropped writes when tx_lock was busy.
   Serial.setTxTimeoutMs(100);
   improvHello();
   usbPoll();
@@ -203,8 +203,8 @@ static void showPages() {
   }
 }
 
-// Las tareas solo ponen las banderas. Esta función, desde loop(), pinta.
-// Token rechazado gana sobre No Wi-Fi, páginas, Hue error y No Bridge.
+// Tasks only set the flags. This function, called from loop(), paints.
+// Rejected token wins over No Wi-Fi, pages, Hue error and No Bridge.
 static void applyStickyScreens() {
   if (gConsoleAuthRejected) {
     gestureDrop();
