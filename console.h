@@ -11,12 +11,6 @@
 #include "recipes.h"
 #include "snapshot.h"
 
-#ifndef CONSOLE_URL
-#define CONSOLE_URL ""
-#endif
-#ifndef CONSOLE_TOKEN
-#define CONSOLE_TOKEN ""
-#endif
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "0.5.26"
 #endif
@@ -46,19 +40,10 @@ inline void consoleNoteHttp(int code) {
   }
 }
 
-inline const char *consoleToken() {
-  if (gConsoleTokNvs[0]) {
-    return gConsoleTokNvs;
-  }
-  return CONSOLE_TOKEN;
-}
+// Token y URL solo vienen de NVS console (HUESET desde la consola web).
+inline const char *consoleToken() { return gConsoleTokNvs; }
 
-inline const char *consoleUrl() {
-  if (gConsoleUrlNvs[0]) {
-    return gConsoleUrlNvs;
-  }
-  return CONSOLE_URL;
-}
+inline const char *consoleUrl() { return gConsoleUrlNvs; }
 
 // Snapshot/register/GET config en tarea propia. Ready no espera 4×20 s.
 inline portMUX_TYPE gConsoleMux = portMUX_INITIALIZER_UNLOCKED;
@@ -172,7 +157,7 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
   portENTER_CRITICAL(&gConsoleMux);
   strlcpy(tokLocal, gConsoleTokNvs, sizeof(tokLocal));
   portEXIT_CRITICAL(&gConsoleMux);
-  const char *tok = tokLocal[0] ? tokLocal : CONSOLE_TOKEN;
+  const char *tok = tokLocal;
   const String url = consoleBaseUrl() + path;
   HTTPClient http;
   http.setTimeout(15000);

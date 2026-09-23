@@ -16,7 +16,7 @@ El estado lo manda `hue-switch-console/docs/round-pages.md`. Esta copia es espej
 
 La consola **nunca** llama al Bridge. El Bridge **nunca** ve Vercel. El dedo en el círculo **nunca** espera a la web. Eso no cambia.
 
-Alta del aparato en este v1: Arduino + `config.h` (`CONSOLE_URL`, `CONSOLE_TOKEN`). Web-setup queda requisitos, fuera de este v1.
+Alta del aparato: la consola web flashea por USB y escribe Wi-Fi (Improv) y token/url (`HUESET`) en NVS. `config.h` ya no lleva credenciales.
 
 ---
 

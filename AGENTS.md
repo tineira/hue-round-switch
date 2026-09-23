@@ -18,7 +18,7 @@ This sketch lives in the Arduino IDE sketchbook (`directories.user` = `C:\Users\
 
 ## Secrets
 
-- `config.h` (gitignored) holds `WIFI_SSID`, `WIFI_PASSWORD`, `CONSOLE_URL`, and `CONSOLE_TOKEN` for **dev**. Product bins compile those empty; Wi-Fi is Arduino STA (Improv), token/url are NVS `console`.
+- `config.h` (gitignored) holds only `SERIAL_DEBUG`. No Wi-Fi, console URL, or token is compiled in, in dev or product. Wi-Fi is Arduino STA (Improv), token/url are NVS `console` (`HUESET`), both written by the console over USB. Uploads do not erase NVS, so a board provisioned once keeps them across dev flashes.
 - Bridge IP, Hue application key, and recipes are not in `config.h`. Discover / pair / NVS / console poll.
 - `config.example.h` is the template that is committed.
 - Never put SSID, passwords, or Hue keys in the `.ino` or in git.
@@ -39,7 +39,7 @@ arduino-cli monitor -p COMx -c baudrate=115200
 
 Replace `COMx` with the XIAO port (`arduino-cli board list`, typically COM4 on HWCDC). First flash on a new S3 may need BOOT held while plugging USB. After HWCDC is on the chip, later uploads use DTR on that same COM — no BOOT.
 
-USB installer images: compile with empty `WIFI_*` / `CONSOLE_*`, copy the four parts into the **console** tree `public/firmware/round/` and set `manifest.json` `version` to `FIRMWARE_VERSION`. Console agents must not revert that folder; tell them in the same recorte. The wizard shows that version, not this sketch until those files are in the console repo (and deployed).
+USB installer images: compile with `SERIAL_DEBUG` 0, copy the four parts into the **console** tree `public/firmware/round/` and set `manifest.json` `version` to `FIRMWARE_VERSION`. Console agents must not revert that folder; tell them in the same recorte. The wizard shows that version, not this sketch until those files are in the console repo (and deployed).
 
 Changelog: when `FIRMWARE_VERSION` changes, add a `### X.Y.Z — YYYY-MM-DD` heading under `## Round` in the **console** tree `docs/changelog.md`, with the `<!-- commit -->` marker above it, in the same recorte. Write each bullet as what changed for the person using the switch (what they see or can now do), not how the code changed: no function names, macros, USB command names, NVS keys, or GPIO numbers. Example: "The switch remembers the Wi-Fi network you saved during setup after it restarts." Not: "Reconnect stored Wi-Fi through the Arduino STA API."
 

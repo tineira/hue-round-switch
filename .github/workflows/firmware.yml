@@ -16,14 +16,10 @@ jobs:
 
       - uses: arduino/setup-arduino-cli@v2
 
-      - name: Product config.h (empty Wi-Fi / token / URL)
+      - name: Product config.h (no USB logs)
         run: |
           printf '%s\n' \
             '#pragma once' \
-            '#define WIFI_SSID ""' \
-            '#define WIFI_PASSWORD ""' \
-            '#define CONSOLE_URL ""' \
-            '#define CONSOLE_TOKEN ""' \
             '#ifndef SERIAL_DEBUG' \
             '#define SERIAL_DEBUG 0' \
             '#endif' > config.h
@@ -77,7 +73,7 @@ jobs:
           git push origin --delete usb-installer 2>/dev/null || true
           gh release create usb-installer \
             --title "USB installer ${VERSION}" \
-            --notes "Round Display product bins (${VERSION}). Empty Wi-Fi/token. Four parts for hue.tineira.com; see docs/firmware-artifacts.md." \
+            --notes "Round Display product bins (${VERSION}). Four parts for hue.tineira.com; see docs/firmware-artifacts.md." \
             --target "${GITHUB_SHA}" \
             dist/installer/bootloader.bin \
             dist/installer/partitions.bin \

@@ -20,13 +20,6 @@ String gHueAppKey;
 #include "console.h"
 #include "usb_setup.h"
 
-#ifndef WIFI_SSID
-#define WIFI_SSID ""
-#endif
-#ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD ""
-#endif
-
 static bool gWifiWasUp = false;
 static bool gHueReady = false;
 static unsigned long gWifiLastTryMs = 0;
@@ -41,13 +34,9 @@ static bool wifiHasArduinoCreds() {
   return ssid[0] != 0;
 }
 
-static bool wifiHasDevSsid() { return WIFI_SSID[0] != '\0'; }
-
 static void wifiBeginKnown() {
   if (wifiHasArduinoCreds()) {
     WiFi.begin();
-  } else if (wifiHasDevSsid()) {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   }
 }
 
@@ -143,7 +132,7 @@ void setup() {
   digitalWrite(LED_BUILTIN, LOW);
 
   LOGLN("hue-round-switch");
-  LOG("firmware %s  SSID: %s\n", FIRMWARE_VERSION, WIFI_SSID);
+  LOG("firmware %s\n", FIRMWARE_VERSION);
 
   consoleLoadNvs();
   recipesLoad();
@@ -178,8 +167,6 @@ void setup() {
 
   if (wifiHasArduinoCreds()) {
     WiFi.begin();
-  } else if (wifiHasDevSsid()) {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   } else {
     uiSet(UI_WIFI_FAIL);
     uiPaint();
@@ -350,7 +337,7 @@ void loop() {
       uiSet(UI_WIFI_FAIL);
     }
     if (!usbWifiBusy() && (now - gWifiLastTryMs >= 10000) &&
-        (wifiHasArduinoCreds() || wifiHasDevSsid())) {
+        wifiHasArduinoCreds()) {
       gWifiLastTryMs = now;
       if (!gConsoleAuthRejected && !gHueAuthRejected) {
         uiSet(UI_WIFI);

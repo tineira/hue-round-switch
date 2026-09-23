@@ -6,16 +6,16 @@ Chip: Seeed XIAO ESP32-S3. Partition scheme: `default_8MB` (`sketch.yaml` profil
 
 ## Product compile
 
-Empty `WIFI_SSID`, `WIFI_PASSWORD`, `CONSOLE_URL`, `CONSOLE_TOKEN`. `SERIAL_DEBUG` 0. CDC is still opened (`Serial.begin`) so Improv + `HUESET` work.
+`SERIAL_DEBUG` 0. Wi-Fi, console URL and token are never compiled in; Improv and `HUESET` write them to NVS. CDC is still opened (`Serial.begin`) so Improv + `HUESET` work.
 
 ```
-# config.h (gitignored) — product values:
-#   WIFI_SSID "" / WIFI_PASSWORD "" / CONSOLE_URL "" / CONSOLE_TOKEN "" / SERIAL_DEBUG 0
+# config.h (gitignored) — product value:
+#   SERIAL_DEBUG 0
 
 arduino-cli compile --profile xiao-s3 --export-binaries .
 ```
 
-CI (`.github/workflows/firmware.yml`) writes that `config.h` and compiles on push to `main`. Dev machines keep a filled `config.h`; do not use this screen against localhost.
+CI (`.github/workflows/firmware.yml`) writes that `config.h` and compiles on push to `main`. A dev `config.h` differs only in `SERIAL_DEBUG`.
 
 `--export-binaries` writes under `build/esp32.esp32.XIAO_ESP32S3/` (gitignored). `boot_app0.bin` is copied there next to `flash_args`.
 
