@@ -9,10 +9,11 @@
 #include "config.h"
 #include "channels.h"
 #include "recipes.h"
+#include "hue_job.h"
 #include "snapshot.h"
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.26"
+#define FIRMWARE_VERSION "0.5.27"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
@@ -25,9 +26,6 @@ inline unsigned long gConsoleLastPollMs = 0;
 inline bool gConsolePolledBoot = false;
 inline char gConsoleTokNvs[kConsoleTokMax] = {0};
 inline char gConsoleUrlNvs[kConsoleUrlMax] = {0};
-
-// Console 401, sticky in RAM. Not stored in NVS. Cleared at boot.
-inline volatile bool gConsoleAuthRejected = false;
 
 inline void consoleNoteHttp(int code) {
   if (code == HTTP_CODE_UNAUTHORIZED) {
@@ -45,16 +43,21 @@ inline const char *consoleToken() { return gConsoleTokNvs; }
 
 inline const char *consoleUrl() { return gConsoleUrlNvs; }
 
-// Snapshot/register/GET config in their own task. Ready does not wait 4×20 s.
+// Register / GET config in their own task (the snapshot itself is built by the hueJob task).
+// The config body reaches the loop through a queue; the loop owns pages and recipes.
 inline portMUX_TYPE gConsoleMux = portMUX_INITIALIZER_UNLOCKED;
 inline bool gConsolePending = false;
 inline bool gConsoleWorkerBusy = false;
 inline bool gConsoleDoRegister = false;
 inline TaskHandle_t gConsoleTask = nullptr;
-inline String gConsoleConfigBody;
-inline bool gConsoleConfigReady = false;
-inline volatile uint32_t gConsoleEpoch = 1;
-inline uint32_t gConsoleBodyEpoch = 0;
+
+struct ConsoleConfigMsg {
+  String *body;
+  uint32_t epoch;
+};
+
+inline QueueHandle_t gConsoleConfigQ = nullptr;
+inline std::atomic<uint32_t> gConsoleEpoch{1};
 
 // Minted keys are hsw_ plus base64url. Anything else is not a console token.
 inline bool consoleLooksLikeToken(const char *tok) {
@@ -225,7 +228,7 @@ inline bool consoleRegister() {
   }
 
   String lights, rooms, scenes;
-  if (!hueBuildSnapshot(&lights, &rooms, &scenes)) {
+  if (!hueJobSnapshot(&lights, &rooms, &scenes, 180000UL)) {
     LOGLN("console register skipped: Hue snapshot failed — last good snapshot kept");
     return false;
   }
@@ -281,17 +284,12 @@ inline void consoleFetchConfigHttp() {
     }
     return;
   }
-  if (epoch != gConsoleEpoch) {
+  if (epoch != gConsoleEpoch || !gConsoleConfigQ) {
     return;
   }
-  gConsoleConfigBody = body;
-  gConsoleBodyEpoch = epoch;
-  if (epoch != gConsoleEpoch) {
-    gConsoleConfigBody = "";
-    gConsoleConfigReady = false;
-    return;
-  }
-  gConsoleConfigReady = true;
+  ConsoleConfigMsg msg{new String(body), epoch};
+  // Waits until the loop took the previous body: never two polls in flight.
+  xQueueSend(gConsoleConfigQ, &msg, portMAX_DELAY);
 }
 
 inline void consoleForget() {
@@ -309,7 +307,6 @@ inline void consoleForget() {
   if (gConsoleEpoch == 0) {
     gConsoleEpoch = 1;
   }
-  gConsoleConfigReady = false;
   Preferences prefs;
   if (prefs.begin("console", false)) {
     prefs.clear();
@@ -355,18 +352,14 @@ inline void consoleApplyConfig(const char *body) {
 }
 
 inline void consoleApplyConfigIfReady() {
-  if (!gConsoleConfigReady) {
+  ConsoleConfigMsg msg;
+  if (!gConsoleConfigQ || xQueueReceive(gConsoleConfigQ, &msg, 0) != pdTRUE) {
     return;
   }
-  if (gConsoleBodyEpoch != gConsoleEpoch) {
-    gConsoleConfigReady = false;
-    gConsoleConfigBody = "";
-    return;
+  if (msg.body && msg.epoch == gConsoleEpoch) {
+    consoleApplyConfig(msg.body->c_str());
   }
-  String body = gConsoleConfigBody;
-  gConsoleConfigBody = "";
-  gConsoleConfigReady = false;
-  consoleApplyConfig(body.c_str());
+  delete msg.body;
 }
 
 inline void consoleJobTask(void * /*arg*/) {
@@ -390,9 +383,6 @@ inline void consoleJobTask(void * /*arg*/) {
         consoleRegister();
       }
       consoleFetchConfigHttp();
-      while (gConsoleConfigReady) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-      }
     }
   }
 }
@@ -401,6 +391,7 @@ inline void consoleJobBegin() {
   if (gConsoleTask) {
     return;
   }
+  gConsoleConfigQ = xQueueCreate(1, sizeof(ConsoleConfigMsg));
   xTaskCreatePinnedToCore(consoleJobTask, "consoleJob", 16384, nullptr, 1, &gConsoleTask, 0);
 }
 
@@ -419,7 +410,7 @@ inline void consolePollTick(unsigned long now) {
   if (!consoleConfigured() || WiFi.status() != WL_CONNECTED) {
     return;
   }
-  if (consoleJobBusy() || gConsoleConfigReady) {
+  if (consoleJobBusy()) {
     return;
   }
   if (gTouchDown || gIdleWakeHold || gDimDragging || gTapWaitDouble) {

@@ -15,6 +15,8 @@ inline bool gTouchFound = false;
 inline bool gTouchFullRange = false;  // true if the chip reports 0..239
 inline uint8_t gTouchRawX = 0;
 inline uint8_t gTouchRawY = 0;
+inline uint8_t gTouchWideFrames = 0;
+static const uint8_t kTouchWideFramesNeeded = 3;
 
 inline void touchScanI2c() {
   LOGS("I2C:");
@@ -48,11 +50,24 @@ inline void touchBegin() {
 
 inline bool touchIrqPressed() { return digitalRead(kPinTouchInt) == LOW; }
 
-inline void touchMapRaw(uint8_t rawx, uint8_t rawy, int16_t *x, int16_t *y) {
+// The chip reports 0..127 or 0..239. Switch to full range only after a few consecutive
+// frames above 127, never on one corrupted frame; frames beyond the panel are dropped.
+inline bool touchMapRaw(uint8_t rawx, uint8_t rawy, int16_t *x, int16_t *y) {
   gTouchRawX = rawx;
   gTouchRawY = rawy;
-  if (rawx > 127 || rawy > 127) {
-    gTouchFullRange = true;
+  if (rawx >= kScreenW || rawy >= kScreenH) {
+    return false;
+  }
+  if (!gTouchFullRange) {
+    if (rawx > 127 || rawy > 127) {
+      if (++gTouchWideFrames < kTouchWideFramesNeeded) {
+        return false;
+      }
+      gTouchFullRange = true;
+      LOGLN("touch: full range 0..239");
+    } else {
+      gTouchWideFrames = 0;
+    }
   }
   if (!gTouchFullRange) {
     *x = (int16_t)((int32_t)rawx * (kScreenW - 1) / 127);
@@ -61,6 +76,7 @@ inline void touchMapRaw(uint8_t rawx, uint8_t rawy, int16_t *x, int16_t *y) {
     *x = rawx;
     *y = rawy;
   }
+  return true;
 }
 
 inline bool touchReadXY(int16_t *x, int16_t *y) {
@@ -75,8 +91,7 @@ inline bool touchReadXY(int16_t *x, int16_t *y) {
   Wire.readBytes(t, 5);
   // CHSC6X Seeed: t[0]==1, x=t[2], y=t[4] (sometimes 0..127, not 0..239)
   if (t[0] == 0x01) {
-    touchMapRaw(t[2], t[4], x, y);
-    return true;
+    return touchMapRaw(t[2], t[4], x, y);
   }
   return false;
 }

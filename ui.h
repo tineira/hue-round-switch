@@ -36,8 +36,16 @@ static const int16_t kNameY = 92;
 static const int16_t kSceneY = 114;
 static const int16_t kDotsY = 197;
 static const unsigned long kDoubleTapMs = 350;
+// Lift inferred from a repeated point with INT high. Measure with SERIAL_DEBUG ("lift ...")
+// before lowering it: too short splits a still press into two taps.
+static const unsigned long kTouchStaleLiftMs = 400;
 static const int16_t kSwipeMinPx = 40;
 static const uint16_t kColYellow = 0xFFE0;
+static const int16_t kTokenMarkY = 229;  // In the ring's gap at 6 o'clock
+static const unsigned long kStateFreshMs = 5000;  // Older on/off state: a toggle asks the Bridge first
+static const unsigned long kFlashMs = 700;
+static const unsigned long kRefreshAfterCmdMs = 1500;
+static const unsigned long kLightPollMs = 20000;
 
 inline UiScreen gUi = UI_BOOT;
 inline UiScreen gUiPainted = (UiScreen)255;
@@ -49,7 +57,6 @@ inline bool gDimDragging = false;
 inline bool gDimHavePct = false;
 inline int gBriPct = 50;
 inline bool gBriKnown = false;
-inline bool gBriLocal = false;
 inline char gBriRid[40] = {0};
 inline int gBriShown = -1;
 inline int gBriLastSent = -1;
@@ -60,6 +67,14 @@ inline bool gTapOnKnown = false;
 inline bool gDblOn = false;
 inline bool gDblOnKnown = false;
 inline unsigned long gLightPollMs = 0;
+// When each on/off value was last confirmed by the Bridge or set by a command here.
+inline unsigned long gLightStateMs = 0;
+inline unsigned long gTapStateMs = 0;
+inline unsigned long gDblStateMs = 0;
+inline bool gUiFlashing = false;
+inline unsigned long gUiFlashUntil = 0;
+inline bool gRefreshAt = false;
+inline unsigned long gRefreshAtMs = 0;
 inline unsigned long gTouchLastPtMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
 inline int16_t gTouchX = -1;
@@ -249,6 +264,7 @@ inline void uiIdleEnter() {
   gSecondTap = false;
   gUiPressed = false;
   displayIdlePanel();
+  pagesFlushLazy(true);
   LOG("display idle\n");
 }
 
@@ -301,6 +317,9 @@ inline uint16_t uiRingColor(UiScreen s, unsigned long now) {
     case UI_EMPTY:
       return t->mute;
     case UI_READY:
+      if (gUiFlashing) {
+        return t->error;
+      }
       if (!uiLightLit()) {
         return gUiPressed ? t->mute : t->ringTrack;
       }
@@ -406,6 +425,10 @@ inline void uiDrawReadyFace() {
     displayTextEllipsis(gSceneName, kSceneY, 1, uiSceneCol(t), sceneBudget, 8);
   }
   uiDrawPageDots(t);
+  // Console token rejected: a quiet marker; the switch keeps working from NVS.
+  if (gConsoleAuthRejected) {
+    gLcd->fillCircle(kScreenCx, kTokenMarkY, 4, t->error);
+  }
 }
 
 inline void uiPaint() {
@@ -519,7 +542,7 @@ inline void uiApplyLastSceneName() {
 
 inline void uiLoadLevel() {
   const char *id = pagesActiveId();
-  if (id && id[0] && !hueJobArmRefresh(id)) {
+  if (id && id[0] && !hueJobArmRefresh(id, true)) {
     gNeedHueState = true;
   }
 }
@@ -539,6 +562,7 @@ inline void uiSetLightOn(bool on) {
   const bool changed = !gLightOnKnown || on != gLightOn;
   gLightOn = on;
   gLightOnKnown = true;
+  gLightStateMs = millis();
   if (!on) {
     gSceneHave = false;
     gSceneName[0] = 0;
@@ -548,113 +572,165 @@ inline void uiSetLightOn(bool on) {
   }
 }
 
-inline void uiHueJobPoll() {
-  HueJobResult r;
-  if (!hueJobTakeResult(&r)) {
+// A command failed: the button ring flashes the error color; Ready stays and keeps
+// taking touches.
+inline void uiFlashError() {
+  gUiFlashing = true;
+  gUiFlashUntil = millis() + kFlashMs;
+  if (!gScreenIdle && gUi == UI_READY) {
+    uiDrawRings(millis());
+  }
+}
+
+inline void uiRefreshSoon(unsigned long delayMs) {
+  gRefreshAt = true;
+  gRefreshAtMs = millis() + delayMs;
+}
+
+inline void uiApplyUserResult(const HueJobResult &r) {
+  const int pageIdx = pagesIndexOf(r.pageId);
+  // Scene cursor bookkeeping runs even when this result is not painted (newer tap, other page).
+  if (r.isScene && pageIdx >= 0) {
+    const bool cursorOurs = strcmp(pagesSceneRidAt(pageIdx), r.chosenRid) == 0;
+    if (!r.ok && cursorOurs) {
+      pagesSetSceneRidAt(pageIdx, r.prevRid);
+    } else if (r.ok && cursorOurs && r.sceneRid[0] && strcmp(r.sceneRid, r.chosenRid) != 0) {
+      pagesSetSceneRidAt(pageIdx, r.sceneRid);  // 404 skipped to the next scene
+    }
+  }
+  if (pageIdx < 0 || pageIdx != gPageIndex || r.gen != hueJobGen()) {
     return;
   }
-  if (strcmp(r.pageId, pagesActiveId()) != 0) {
+  if (gUi != UI_READY && gUi != UI_EMPTY) {
     return;
   }
-  if (r.kind == HUE_JOB_REFRESH) {
-    if (gUi != UI_READY && gUi != UI_EMPTY) {
-      return;
-    }
-    bool paint = false;
-    if (r.haveTapOn && (!gTapOnKnown || r.tapOn != gTapOn)) {
-      gTapOn = r.tapOn;
-      gTapOnKnown = true;
-      paint = true;
-    } else if (r.haveTapOn) {
-      gTapOnKnown = true;
-    }
-    if (r.haveDblOn && (!gDblOnKnown || r.dblOn != gDblOn)) {
-      gDblOn = r.dblOn;
-      gDblOnKnown = true;
-      paint = true;
-    } else if (r.haveDblOn) {
-      gDblOnKnown = true;
-    }
-    if (r.haveTapOn || r.haveDblOn) {
-      const bool any = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
-      if (!gLightOnKnown || any != gLightOn) {
-        gLightOn = any;
-        paint = true;
-      }
-      gLightOnKnown = true;
-    } else if (r.haveOn && (!gLightOnKnown || r.on != gLightOn)) {
-      gLightOn = r.on;
-      gLightOnKnown = true;
-      if (!r.on) {
-        gSceneHave = false;
-        gSceneName[0] = 0;
-      }
-      paint = true;
-    } else if (r.haveOn) {
-      gLightOnKnown = true;
-    }
-    if (r.haveBri && !gBriLocal && uiHasDim()) {
-      const int pct = uiClampPct(r.pct);
-      if (!gBriKnown || pct != gBriPct) {
-        gBriPct = pct;
-        paint = true;
-      }
-      gBriKnown = true;
-    }
-    if (r.haveScene && (gLightOnKnown && gLightOn)) {
-      if (r.sceneHave != gSceneHave || strcmp(gSceneName, r.sceneName) != 0) {
-        gSceneHave = r.sceneHave;
-        recipeCopyField(gSceneName, sizeof(gSceneName), r.sceneName);
-        paint = true;
-      }
-    }
-    if (paint && !gScreenIdle) {
+  if (!r.ok) {
+    uiFlashError();
+    if (r.isScene) {
+      uiApplyLastSceneName();
       uiSyncFace();
     }
+    uiRefreshSoon(300);
     return;
   }
-  if (r.kind == HUE_JOB_RECIPE) {
-    if (!r.ok) {
-      if (gScreenIdle) {
-        return;
+  const unsigned long now = millis();
+  bool paint = false;
+  if (r.haveOn) {
+    const bool split = uiSplitTwoLights();
+    if (split && r.kind == HUE_JOB_RECIPE) {
+      if (strcmp(r.event, "double_click") == 0) {
+        paint = paint || !gDblOnKnown || gDblOn != r.on;
+        gDblOn = r.on;
+        gDblOnKnown = true;
+        gDblStateMs = now;
+      } else {
+        paint = paint || !gTapOnKnown || gTapOn != r.on;
+        gTapOn = r.on;
+        gTapOnKnown = true;
+        gTapStateMs = now;
       }
-      if (!gHueAuthRejected && (gUi == UI_READY || gUi == UI_EMPTY)) {
-        gUiPressed = false;
-        uiSet(UI_ERROR);
-        uiPaint();
+      gLightOn = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
+      gLightOnKnown = true;
+    } else {
+      paint = paint || !gLightOnKnown || gLightOn != r.on;
+      gLightOn = r.on;
+      gLightOnKnown = true;
+      gLightStateMs = now;
+      if (!r.on) {
+        paint = paint || gSceneHave;
+        gSceneHave = false;
+        gSceneName[0] = 0;
+        if (!split) {
+          pagesSetLastSceneRid("");
+        }
+      } else if (!r.isScene && !gSceneHave) {
+        uiApplyLastSceneName();
+        paint = paint || gSceneHave;
       }
-      return;
     }
-    if (r.haveLastScene) {
-      pagesSetLastSceneRid(r.lastSceneRid);
+  }
+  if (r.isScene && r.haveScene) {
+    paint = paint || gSceneHave != r.sceneHave || strcmp(gSceneName, r.sceneName) != 0;
+    gSceneHave = r.sceneHave;
+    recipeCopyField(gSceneName, sizeof(gSceneName), r.sceneName);
+  }
+  if (paint && !gScreenIdle) {
+    uiSyncFace();
+  }
+  // The Bridge is the truth: read it back once the transition settled.
+  uiRefreshSoon(kRefreshAfterCmdMs);
+}
+
+inline void uiApplyRefresh(const HueJobResult &r) {
+  // A command since this read was queued: its state is newer than the read.
+  if (strcmp(r.pageId, pagesActiveId()) != 0 || r.gen != hueJobGen()) {
+    return;
+  }
+  if (gUi != UI_READY && gUi != UI_EMPTY) {
+    return;
+  }
+  const unsigned long now = millis();
+  bool paint = false;
+  if (r.haveTapOn) {
+    paint = paint || !gTapOnKnown || r.tapOn != gTapOn;
+    gTapOn = r.tapOn;
+    gTapOnKnown = true;
+    gTapStateMs = now;
+  }
+  if (r.haveDblOn) {
+    paint = paint || !gDblOnKnown || r.dblOn != gDblOn;
+    gDblOn = r.dblOn;
+    gDblOnKnown = true;
+    gDblStateMs = now;
+  }
+  if (r.haveTapOn || r.haveDblOn) {
+    const bool any = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
+    paint = paint || !gLightOnKnown || any != gLightOn;
+    gLightOn = any;
+    gLightOnKnown = true;
+    gLightStateMs = now;
+  } else if (r.haveOn) {
+    paint = paint || !gLightOnKnown || r.on != gLightOn;
+    gLightOn = r.on;
+    gLightOnKnown = true;
+    gLightStateMs = now;
+    if (!r.on) {
+      paint = paint || gSceneHave;
+      gSceneHave = false;
+      gSceneName[0] = 0;
     }
-    if (r.haveScene) {
+  }
+  if (r.haveBri && uiHasDim() && !gDimDragging) {
+    const int pct = uiClampPct(r.pct);
+    paint = paint || !gBriKnown || pct != gBriPct;
+    gBriPct = pct;
+    gBriKnown = true;
+    gBriLastSent = pct;
+  }
+  if (r.haveScene && gLightOnKnown && gLightOn) {
+    if (r.sceneHave != gSceneHave || strcmp(gSceneName, r.sceneName) != 0) {
       gSceneHave = r.sceneHave;
       recipeCopyField(gSceneName, sizeof(gSceneName), r.sceneName);
-      if (!gScreenIdle) {
-        uiSyncFace();
-      }
+      paint = true;
     }
-    if (r.haveBri && uiHasDim() && !gDimDragging) {
-      const int pct = uiClampPct(r.pct);
-      gBriPct = pct;
-      gBriKnown = true;
-      gBriLocal = false;
-      gBriLastSent = pct;
-      if (r.haveOn) {
-        gLightOn = r.on;
-        gLightOnKnown = true;
-      }
-      if (!gScreenIdle) {
-        uiSyncFace();
-      }
+    // The next tap cycles on from the scene that is really on.
+    if (r.sceneHave && r.sceneRid[0] && strcmp(pagesLastSceneRid(), r.sceneRid) != 0) {
+      pagesSetLastSceneRid(r.sceneRid);
     }
-    return;
   }
-  if (!r.ok && !gScreenIdle && !gHueAuthRejected && (gUi == UI_READY || gUi == UI_EMPTY)) {
-    gUiPressed = false;
-    uiSet(UI_ERROR);
-    uiPaint();
+  if (paint && !gScreenIdle) {
+    uiSyncFace();
+  }
+}
+
+inline void uiHueJobPoll() {
+  HueJobResult r;
+  while (hueJobTakeResult(&r)) {
+    if (r.kind == HUE_JOB_REFRESH) {
+      uiApplyRefresh(r);
+    } else {
+      uiApplyUserResult(r);
+    }
   }
 }
 
@@ -666,13 +742,16 @@ inline void uiOnPageChanged() {
   gTapOnKnown = false;
   gDblOn = false;
   gDblOnKnown = false;
+  gLightStateMs = 0;
+  gTapStateMs = 0;
+  gDblStateMs = 0;
   gBriKnown = false;
-  gBriLocal = false;
   gBriRid[0] = 0;
   gBriShown = -1;
   gBriLastSent = -1;
   gSceneHave = false;
   gSceneName[0] = 0;
+  gRefreshAt = false;
   hueJobClearPending();
   gNeedHueState = true;
   const Page *p = pagesActive();
@@ -682,51 +761,66 @@ inline void uiOnPageChanged() {
   }
 }
 
+// Paints the gesture's local result at once (fill, scene name); the PUT follows in the
+// hueJob task. Always repaints the face (clears the press invert).
 inline bool uiFireEvent(const char *event) {
   if (gScreenIdle || gIdleWakeHold) {
     return false;
   }
-  if (gHueAuthRejected || gUi == UI_WIFI || gUi == UI_WIFI_FAIL || gUi == UI_NO_BRIDGE || gUi == UI_LOADING ||
-      gUi == UI_PAIRING || gUi == UI_BOOT || gUi == UI_TOKEN) {
+  if (gUi != UI_READY && gUi != UI_EMPTY) {
     return false;
   }
+  const unsigned long now = millis();
   const bool split = uiSplitTwoLights();
-  bool on = gLightOnKnown && gLightOn;
+  const bool dbl = event && strcmp(event, "double_click") == 0;
+  bool known = gLightOnKnown;
+  bool on = gLightOn;
+  unsigned long stateMs = gLightStateMs;
   if (split) {
-    if (event && strcmp(event, "double_click") == 0) {
-      on = gDblOnKnown && gDblOn;
-    } else {
-      on = gTapOnKnown && gTapOn;
-    }
+    known = dbl ? gDblOnKnown : gTapOnKnown;
+    on = dbl ? gDblOn : gTapOn;
+    stateMs = dbl ? gDblStateMs : gTapStateMs;
   }
-  const HueArmResult fr = hueJobArmRecipe(pagesActiveId(), event, &on);
+  const bool fresh = known && stateMs != 0 && (now - stateMs) < kStateFreshMs;
+  HueArmInfo info;
+  const HueArmResult fr = hueJobArmRecipe(pagesActiveId(), event, fresh, known && on, &info);
   if (fr == HUE_ARM_ERR) {
-    gUiPressed = false;
-    uiSet(UI_ERROR);
-    uiPaint();
+    uiSyncFace();
+    uiFlashError();
     return false;
   }
-  if (fr == HUE_ARM_NONE) {
+  if (fr == HUE_ARM_NONE || !info.haveOn) {
+    // No recipe, or a toggle the task resolves with a GET first: paint on the result.
+    uiSyncFace();
     return true;
   }
+  gRefreshAt = false;
   if (split) {
-    if (event && strcmp(event, "double_click") == 0) {
-      gDblOn = on;
+    if (dbl) {
+      gDblOn = info.on;
       gDblOnKnown = true;
+      gDblStateMs = now;
     } else {
-      gTapOn = on;
+      gTapOn = info.on;
       gTapOnKnown = true;
+      gTapStateMs = now;
     }
     gLightOn = (gTapOnKnown && gTapOn) || (gDblOnKnown && gDblOn);
     gLightOnKnown = true;
     uiSyncFace();
     return true;
   }
-  uiSetLightOn(on);
-  if (on) {
+  gLightOn = info.on;
+  gLightOnKnown = true;
+  gLightStateMs = now;
+  if (!info.on) {
+    gSceneHave = false;
+    gSceneName[0] = 0;
+  } else {
+    // For a scene tap the cursor already points at the scene being recalled.
     uiApplyLastSceneName();
-    uiSyncFace();
   }
+  uiSyncFace();
   return true;
 }
 
@@ -738,6 +832,12 @@ inline void uiTick(unsigned long now) {
   if (gTapWaitDouble && !gTouchDown && !gSecondTap && (now - gTapWaitMs) >= kDoubleTapMs) {
     gTapWaitDouble = false;
     uiFireEvent("short");
+  }
+  if (gUiFlashing && (long)(now - gUiFlashUntil) >= 0) {
+    gUiFlashing = false;
+    if (!gScreenIdle && gUi == UI_READY) {
+      uiDrawRings(now);
+    }
   }
   if (gUi == UI_ERROR && now >= gUiErrorUntilMs) {
     uiSet(uiFromRecipes());
@@ -768,6 +868,7 @@ inline void uiTick(unsigned long now) {
     return;
   }
   if (gScreenIdle) {
+    // No Hue reads while asleep.
     displayBl(false);
     return;
   }
@@ -775,14 +876,21 @@ inline void uiTick(unsigned long now) {
     uiDrawRings(now);
     gUiPulseMs = now;
   }
-  if ((gUi == UI_READY || gUi == UI_EMPTY) && !gTouchDown) {
+  if ((gUi == UI_READY || gUi == UI_EMPTY) && !gTouchDown && hueLinkUsable()) {
+    const char *id = pagesActiveId();
     if (gNeedHueState) {
-      if (hueJobArmRefresh(pagesActiveId())) {
+      if (hueJobArmRefresh(id, true)) {
         gNeedHueState = false;
+        gRefreshAt = false;
         gLightPollMs = now;
       }
-    } else if (now - gLightPollMs >= 20000) {
-      if (hueJobArmRefresh(pagesActiveId())) {
+    } else if (gRefreshAt && (long)(now - gRefreshAtMs) >= 0) {
+      if (hueJobArmRefresh(id, true)) {
+        gRefreshAt = false;
+        gLightPollMs = now;
+      }
+    } else if (now - gLightPollMs >= kLightPollMs) {
+      if (hueJobArmRefresh(id, true)) {
         gLightPollMs = now;
       }
     }
@@ -802,12 +910,13 @@ inline bool uiDimPut(int pct) {
     return true;
   }
   if (!hueJobArmDim(p->id, pct)) {
+    uiFlashError();
     return false;
   }
+  gRefreshAt = false;
   gBriLastSent = pct;
   gBriPct = pct;
   gBriKnown = true;
-  gBriLocal = true;
   uiSetLightOn(true);
   return true;
 }
@@ -824,7 +933,6 @@ inline void uiDimFromPoint(int16_t x, int16_t y) {
   gDimHavePct = true;
   gBriPct = pct;
   gBriKnown = true;
-  gBriLocal = true;
   if (!uiLightLit()) {
     gLightOn = true;
     gLightOnKnown = true;
@@ -909,22 +1017,25 @@ inline void uiTouchEnd(unsigned long now) {
   gSwipeDone = false;
   gTouchIgnoreUntil = now + 40;
 
+  bool fired = false;
   if (wasCenter && !swiped && (gUi == UI_READY || gUi == UI_EMPTY)) {
     if (gSecondTap) {
       gSecondTap = false;
       gTapWaitDouble = false;
       uiFireEvent("double_click");
+      fired = true;
     } else if (uiPageHasDouble()) {
       gTapWaitDouble = true;
       gTapWaitMs = now;
     } else {
       uiFireEvent("short");
+      fired = true;
     }
   } else {
     gSecondTap = false;
   }
 
-  if (gUi == UI_READY || gUi == UI_EMPTY) {
+  if (!fired && (gUi == UI_READY || gUi == UI_EMPTY)) {
     uiDrawReadyFace();
     if (uiHasDim()) {
       uiDrawLevel();
@@ -963,10 +1074,13 @@ inline void uiPollTouch(unsigned long now) {
 
   if (gTouchDown) {
     if (!hasPt && (now - gTouchLastPtMs) >= 80) {
+      LOG("lift no-point %lums\n", now - gTouchLastPtMs);
       uiTouchEnd(now);
       return;
     }
-    if (hasPt && !irq && !moved && (now - gTouchLastPtMs) >= 400) {
+    // The chip can keep reporting the last point after the finger leaves (INT high).
+    if (hasPt && !irq && !moved && (now - gTouchLastPtMs) >= kTouchStaleLiftMs) {
+      LOG("lift stale-point raw %u,%u %lums\n", gTouchRawX, gTouchRawY, now - gTouchLastPtMs);
       uiTouchEnd(now);
       return;
     }
@@ -976,12 +1090,15 @@ inline void uiPollTouch(unsigned long now) {
     if (!irq || !hasPt || now < gTouchIgnoreUntil) {
       return;
     }
-    const bool inBtn = touchHitButton(x, y, kBtnRadius);
-    const bool inRing = touchHitRing(x, y, kRingGrabInner, kRingOuter + 8);
+    // With a dimmer the ring starts right outside the button; without one the button
+    // takes the whole face. No dead band either way.
+    const bool hasDim = uiHasDim();
+    const bool inBtn = touchHitButton(x, y, hasDim ? kBtnRadius : kRingOuter + 8);
+    const bool inRing = hasDim && !inBtn && touchHitRing(x, y, kBtnRadius, kRingOuter + 8);
     if (gUi != UI_READY && gUi != UI_EMPTY) {
       return;
     }
-    if (gTapWaitDouble && inRing && uiHasDim()) {
+    if (gTapWaitDouble && inRing) {
       gTapWaitDouble = false;
       uiFireEvent("short");
     }
@@ -993,7 +1110,7 @@ inline void uiPollTouch(unsigned long now) {
     gTouchStartY = y;
     gSwipeDone = false;
     uiIdleNoteTouch(now);
-    if (inRing && uiHasDim()) {
+    if (inRing) {
       gTouchMode = TOUCH_RING;
       gDimDragging = true;
       gDimHavePct = false;

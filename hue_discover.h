@@ -2,32 +2,26 @@
 
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <atomic>
 #include "hue.h"
 #include "json_util.h"
 
-// Discover the Bridge (mDNS _hue._tcp) and pair the application key.
+// Discover the Bridge (cached IP, mDNS _hue._tcp, cloud) and pair the application key.
 // IP and key are saved in NVS so a DHCP change does not require a rebuild.
+// Everything here runs in the hueJob task, except the NVS helpers the USB parser calls.
 
-static const unsigned long kPairTimeoutMs = 90000;
 static const unsigned long kLongPressMs = 3000;
-
-// The .ino hooks the screen pulse in during the pairing POST.
-inline void (*gOnHueWait)() = nullptr;
-inline void (*gOnHuePairing)(bool pairing) = nullptr;
 
 inline String gHueBridgeId;
 
-// HUEPAIR runs in the hueJob task. The USB parser reads these flags.
-inline volatile bool gHuePairAsync = false;
-inline volatile bool gHuePairBusy = false;
-inline volatile bool gHuePairReq = false;
-inline volatile bool gHuePairCancel = false;
-inline volatile uint32_t gHueClrEpoch = 1;
-inline volatile uint32_t gHuePairEpoch = 0;
-inline volatile uint8_t gHuePairOutcome = 0;
-inline volatile bool gHuePairShowPending = false;
-inline volatile bool gUsbWantWifiFail = false;
-inline volatile bool gWifiStaForgotten = false;
+// Loop (USB / BOOT) → hueJob task.
+inline std::atomic<bool> gHuePairReq{false};
+inline std::atomic<bool> gHuePairCancel{false};
+inline std::atomic<uint32_t> gHueClrEpoch{1};
+inline std::atomic<uint32_t> gHuePairEpoch{0};
+inline std::atomic<bool> gWifiStaForgotten{false};
+
+inline bool huePairBusy() { return gHuePairReq || gHueLink == LINK_PAIRING; }
 
 inline void hueSetBridgeId(const String &v) {
   hueStrLock();
@@ -40,7 +34,6 @@ inline void hueZeroRam() {
   gHueBridgeIp = "";
   gHueAppKey = "";
   gHueBridgeId = "";
-  gHuePairOutcome = 0;
   hueStrUnlock();
 }
 
@@ -60,13 +53,11 @@ inline bool hueLooksLikeIp(const String &s) {
   return dots == 3;
 }
 
-inline bool hueLooksLikeKey(const String &s) {
-  return s.length() >= 20 && s.indexOf("your-") < 0;
-}
+inline bool hueLooksLikeKey(const String &s) { return s.length() >= 20 && s.indexOf("your-") < 0; }
 
 inline bool hueProbeBridge(const String &ip, String *bridgeId) {
   String body;
-  const int code = hueHttp("https://" + ip + "/api/config", "GET", nullptr, &body, false, true);
+  const int code = hueHttpOnce("https://" + ip + "/api/config", "GET", nullptr, &body, true, 4000);
   if (code != HTTP_CODE_OK) {
     return false;
   }
@@ -96,7 +87,7 @@ inline void hueLoadStore() {
   }
   hueStrLock();
   gHueBridgeIp = ip;
-  gHueAppKey = key;
+  gHueAppKey = hueLooksLikeKey(key) ? key : String();
   gHueBridgeId = id;
   hueStrUnlock();
 }
@@ -138,6 +129,11 @@ inline void hueSaveStore() {
   if (!prefs.begin("hue", false)) {
     return;
   }
+  // Called on every READY from setup: skip the flash write when nothing changed.
+  if (prefs.getString("ip", "") == ip && prefs.getString("key", "") == key && prefs.getString("bid", "") == id) {
+    prefs.end();
+    return;
+  }
   prefs.putString("ip", ip);
   prefs.putString("key", key);
   prefs.putString("bid", id);
@@ -151,6 +147,8 @@ inline void hueSaveStore() {
   }
 }
 
+inline bool gMdnsStarted = false;
+
 inline bool hueDiscoverMdns() {
   if (gHuePairCancel) {
     return false;
@@ -158,11 +156,15 @@ inline bool hueDiscoverMdns() {
   hueStrLock();
   const String wantId = gHueBridgeId;
   hueStrUnlock();
-  String host = "hue-sw-";
-  host += String((uint16_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
-  if (!MDNS.begin(host.c_str())) {
-    LOGLN("mDNS begin failed");
-    return false;
+  // mdns_init() fails when called twice: start it once and keep it.
+  if (!gMdnsStarted) {
+    String host = "hue-sw-";
+    host += String((uint16_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
+    if (!MDNS.begin(host.c_str())) {
+      LOGLN("mDNS begin failed");
+      return false;
+    }
+    gMdnsStarted = true;
   }
 
   const int n = MDNS.queryService("hue", "tcp");
@@ -197,7 +199,7 @@ inline bool hueDiscoverMdns() {
 
 inline bool hueDiscoverCloud() {
   String body;
-  const int code = hueHttp("https://discovery.meethue.com/", "GET", nullptr, &body, false, false);
+  const int code = hueHttpOnce("https://discovery.meethue.com/", "GET", nullptr, &body, false);
   LOG("discovery.meethue.com %d\n", code);
   if (code != HTTP_CODE_OK) {
     return false;
@@ -211,7 +213,8 @@ inline bool hueDiscoverCloud() {
   return true;
 }
 
-inline bool hueFindBridge() {
+// Cached IP first (no mDNS round when the Bridge did not move), then mDNS, config.h, cloud.
+inline bool hueFindBridge(bool skipCached = false) {
   if (gHuePairCancel) {
     return false;
   }
@@ -219,28 +222,9 @@ inline bool hueFindBridge() {
   const String cached = gHueBridgeIp;
   hueStrUnlock();
 
-  if (hueDiscoverMdns()) {
-    if (gHuePairCancel) {
-      return false;
-    }
-    hueStrLock();
-    const String ip = gHueBridgeIp;
-    hueStrUnlock();
-    String id;
-    if (hueProbeBridge(ip, &id)) {
-      hueSetBridgeId(id);
-      LOG("Bridge via mDNS %s id=%s\n", ip.c_str(), id.c_str());
-      return true;
-    }
-  }
-
-  if (gHuePairCancel) {
-    return false;
-  }
-  if (hueLooksLikeIp(cached)) {
+  if (!skipCached && hueLooksLikeIp(cached)) {
     String id;
     if (hueProbeBridge(cached, &id)) {
-      hueSetBridgeIp(cached);
       hueSetBridgeId(id);
       LOG("Bridge via cache %s\n", cached.c_str());
       return true;
@@ -250,7 +234,22 @@ inline bool hueFindBridge() {
   if (gHuePairCancel) {
     return false;
   }
-  if (hueLooksLikeIp(HUE_BRIDGE_IP)) {
+  if (hueDiscoverMdns()) {
+    hueStrLock();
+    const String ip = gHueBridgeIp;
+    hueStrUnlock();
+    String id;
+    if (!gHuePairCancel && hueProbeBridge(ip, &id)) {
+      hueSetBridgeId(id);
+      LOG("Bridge via mDNS %s id=%s\n", ip.c_str(), id.c_str());
+      return true;
+    }
+  }
+
+  if (gHuePairCancel) {
+    return false;
+  }
+  if (hueLooksLikeIp(HUE_BRIDGE_IP) && cached != HUE_BRIDGE_IP) {
     String id;
     if (hueProbeBridge(HUE_BRIDGE_IP, &id)) {
       hueSetBridgeIp(String(HUE_BRIDGE_IP));
@@ -275,6 +274,10 @@ inline bool hueFindBridge() {
     }
   }
 
+  // Keep the cached IP for the next attempt.
+  if (hueLooksLikeIp(cached)) {
+    hueSetBridgeIp(cached);
+  }
   LOGLN("Bridge not found");
   return false;
 }
@@ -284,113 +287,47 @@ inline void hueBlink(unsigned long ms) {
   digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
 }
 
-// POST /api until the Bridge button is pressed (or timeout).
-inline bool huePairAppKey() {
+// One pairing POST. True when the Bridge handed out a key (stored in RAM, grace armed).
+inline bool huePairStep() {
   hueStrLock();
   const String ip = gHueBridgeIp;
   hueStrUnlock();
-  if (!hueLooksLikeIp(ip)) {
+  if (!hueLooksLikeIp(ip) || gHuePairCancel) {
     return false;
   }
-
-  LOGLN("Pairing: press the Bridge link button");
-  // In async mode the loop paints the screen. This task never touches the TFT or the CDC.
-  if (!gHuePairAsync && gOnHuePairing) {
-    gOnHuePairing(true);
-  }
-  const unsigned long start = millis();
-  while (millis() - start < kPairTimeoutMs) {
-    if (gHuePairCancel) {
-      break;
-    }
-    hueBlink(millis() - start);
-    String body;
-    const int code = hueHttp("https://" + ip + "/api", "POST",
-                             "{\"devicetype\":\"hue-round-switch#xiao\"}", &body, false, true);
-    if (gHuePairCancel) {
-      break;
-    }
-    String user;
-    if (jsonStringField(body, "username", &user) && hueLooksLikeKey(user)) {
-      hueSetAppKey(user);
-      // Same as Simple: 20 s so an immediate 401 does not leave No Bridge stuck.
-      hueAuthGraceArm(20000);
-      digitalWrite(LED_BUILTIN, HIGH);
-      LOGLN("Paired (key stored in flash)");
-      if (!gHuePairAsync && gOnHuePairing) {
-        gOnHuePairing(false);
-      }
-      return true;
-    }
-    if (body.indexOf("link button not pressed") < 0 && code > 0) {
-      LOG("Pair POST %d %s\n", code, body.c_str());
-    }
-    if (!gHuePairAsync && gOnHueWait) {
-      gOnHueWait();
-    }
-    for (uint8_t i = 0; i < 8 && !gHuePairCancel; i++) {
-      delay(50);
-    }
-  }
-  digitalWrite(LED_BUILTIN, LOW);
+  hueBlink(millis());
+  String body;
+  const int code = hueHttpOnce("https://" + ip + "/api", "POST", "{\"devicetype\":\"hue-round-switch#xiao\"}", &body,
+                               true, 4000);
   if (gHuePairCancel) {
-    LOGLN("Pairing cancelled");
-  } else {
-    LOGLN("Pairing timeout");
+    return false;
   }
-  if (!gHuePairAsync && gOnHuePairing) {
-    gOnHuePairing(false);
+  String user;
+  if (jsonStringField(body, "username", &user) && hueLooksLikeKey(user)) {
+    hueSetAppKey(user);
+    // Same as Simple: 20 s so an immediate 401 does not bounce back to pairing.
+    hueAuthGraceArm(20000);
+    digitalWrite(LED_BUILTIN, HIGH);
+    LOGLN("Paired (key stored in flash)");
+    return true;
+  }
+  if (body.indexOf("link button not pressed") < 0 && code > 0) {
+    LOG("Pair POST %d %s\n", code, body.c_str());
   }
   return false;
 }
 
-inline bool hueKeyWorks() {
+// Keyed GET on the Bridge resource. Returns the HTTP code (hueNoteAuth sees it too).
+inline int hueKeyCheck() {
   hueStrLock();
   const String key = gHueAppKey;
   const String ip = gHueBridgeIp;
   hueStrUnlock();
   if (!hueLooksLikeKey(key) || !hueLooksLikeIp(ip)) {
-    return false;
+    return -1;
   }
   String body;
-  const int code = hueHttp("https://" + ip + "/clip/v2/resource/bridge", "GET", nullptr, &body, true, true);
+  const int code = hueHttp("https://" + ip + "/clip/v2/resource/bridge", "GET", nullptr, &body, 4000);
   LOG("Hue auth GET %d\n", code);
-  return code == HTTP_CODE_OK;
-}
-
-inline bool hueEnsureReady() {
-  hueLoadStore();
-  if (!hueFindBridge()) {
-    return false;
-  }
-  if (!hueKeyWorks()) {
-    if (!huePairAppKey() || !hueKeyWorks()) {
-      return false;
-    }
-  }
-  hueSaveStore();
-  return true;
-}
-
-inline bool hueRePair() {
-  LOGLN("Re-pair requested");
-  const bool ownBusy = !gHuePairBusy;
-  if (ownBusy) {
-    gHuePairBusy = true;
-  }
-  hueSetAppKey("");
-  bool ok = false;
-  if (!gHuePairCancel && hueFindBridge() && !gHuePairCancel && huePairAppKey() && !gHuePairCancel) {
-    hueSaveStore();
-    hueKeyWorks();
-    // The POST already delivered the key. A failed check GET does not send the screen back to "no Bridge".
-    ok = !gHuePairCancel && hueLooksLikeKey(gHueAppKey);
-  }
-  if (gHuePairCancel) {
-    ok = false;
-  }
-  if (ownBusy) {
-    gHuePairBusy = false;
-  }
-  return ok;
+  return code;
 }

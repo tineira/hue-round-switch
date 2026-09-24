@@ -22,6 +22,7 @@ struct BootRuntime {
 };
 
 inline BootRuntime gBoot;
+inline bool gBootPairWant = false;
 
 inline void channelsAppendJson(String &out) { out += "[]"; }
 
@@ -54,20 +55,11 @@ inline void bootPoll(unsigned long now) {
     gBoot.longPressHandled = true;
     if (gWifiStaForgotten || WiFi.status() != WL_CONNECTED) {
       LOGLN("Re-pair skipped: WiFi down");
-    } else if (gHuePairBusy || gHuePairReq) {
+    } else if (huePairBusy()) {
       LOGLN("Re-pair skipped: already pairing");
     } else {
-      gHuePairCancel = false;
-      if (hueRePair()) {
-        hueStrLock();
-        const String ip = gHueBridgeIp;
-        const String id = gHueBridgeId;
-        hueStrUnlock();
-        LOG("Using Bridge %s\n", ip.c_str());
-        recipesBindBridge(id);
-        pagesBindBridge(id);
-        gNeedConsoleSync = true;
-      }
+      // The loop hands it to the hueJob task (same path as HUEPAIR).
+      gBootPairWant = true;
     }
     return;
   }

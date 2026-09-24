@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Preferences.h>
+#include <atomic>
 #include <string.h>
 #include "json_util.h"
 #include "pages.h"
@@ -31,6 +32,9 @@ inline uint8_t gRecipeCount = 0;
 inline uint32_t gRecipeRev = 0;
 inline String gRecipeBridgeId;
 inline bool gNeedConsoleSync = false;
+// Console 401, sticky in RAM (console task writes, loop reads). Not stored in NVS.
+// It does not stop local control: recipes in NVS keep running on the LAN.
+inline std::atomic<bool> gConsoleAuthRejected{false};
 inline bool gRecipesBidReset = false;
 
 inline bool recipeEventOk(const char *e) {

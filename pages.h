@@ -102,6 +102,13 @@ inline uint8_t gPageIndex = 0;
 inline PageSwipeAxis gPageSwipeAxis = PAGE_SWIPE_HORIZONTAL;
 inline String gPageBridgeId;
 inline char gLastSceneRid[kMaxPages][40];
+// What NVS holds. The cursor and index change on every tap / swipe; they are written
+// lazily (pagesFlushLazy), not per gesture.
+inline char gLastSceneSaved[kMaxPages][40];
+inline uint8_t gPageIndexSaved = 0;
+inline bool gPagesDirty = false;
+inline unsigned long gPagesDirtyMs = 0;
+static const unsigned long kPagesFlushMs = 5000;
 inline bool gNeedHueState = false;
 inline bool gNeedFullPaint = false;
 
@@ -263,16 +270,69 @@ inline const char *pagesLastSceneRid() {
   return gLastSceneRid[gPageIndex];
 }
 
-inline void pagesSetLastSceneRid(const char *rid) {
-  if (gPageIndex >= kMaxPages) {
+inline void pagesMarkDirty() {
+  if (!gPagesDirty) {
+    gPagesDirty = true;
+    gPagesDirtyMs = millis();
+  }
+}
+
+inline void pagesMarkSaved() {
+  memcpy(gLastSceneSaved, gLastSceneRid, sizeof(gLastSceneSaved));
+  gPageIndexSaved = gPageIndex;
+  gPagesDirty = false;
+}
+
+inline int pagesIndexOf(const char *id) {
+  if (!id || !id[0]) {
+    return -1;
+  }
+  for (uint8_t i = 0; i < gPageCount; i++) {
+    if (strcmp(gPages[i].id, id) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+inline const char *pagesSceneRidAt(int i) {
+  if (i < 0 || i >= kMaxPages) {
+    return "";
+  }
+  return gLastSceneRid[i];
+}
+
+// RAM now, NVS within kPagesFlushMs.
+inline void pagesSetSceneRidAt(int i, const char *rid) {
+  if (i < 0 || i >= kMaxPages) {
     return;
   }
-  pageCopyField(gLastSceneRid[gPageIndex], sizeof(gLastSceneRid[0]), rid);
+  pageCopyField(gLastSceneRid[i], sizeof(gLastSceneRid[0]), rid);
+  pagesMarkDirty();
+}
+
+inline void pagesSetLastSceneRid(const char *rid) { pagesSetSceneRidAt(gPageIndex, rid); }
+
+// Writes only the cursors / index that changed. force: screen sleep.
+inline void pagesFlushLazy(bool force) {
+  if (!gPagesDirty || (!force && millis() - gPagesDirtyMs < kPagesFlushMs)) {
+    return;
+  }
   Preferences prefs;
-  prefs.begin("pages", false);
-  char key[4] = {'s', static_cast<char>('0' + gPageIndex), 0, 0};
-  prefs.putString(key, gLastSceneRid[gPageIndex]);
+  if (!prefs.begin("pages", false)) {
+    return;
+  }
+  for (uint8_t i = 0; i < kMaxPages; i++) {
+    if (strcmp(gLastSceneSaved[i], gLastSceneRid[i]) != 0) {
+      char key[4] = {'s', static_cast<char>('0' + i), 0, 0};
+      prefs.putString(key, gLastSceneRid[i]);
+    }
+  }
+  if (gPageIndexSaved != gPageIndex) {
+    prefs.putUChar("idx", gPageIndex);
+  }
   prefs.end();
+  pagesMarkSaved();
 }
 
 inline void pagesClampIndex() {
@@ -497,13 +557,6 @@ inline bool pagesParseArray(const char *json, uint8_t *countOut) {
   return true;
 }
 
-inline void pagesSaveIndex() {
-  Preferences prefs;
-  prefs.begin("pages", false);
-  prefs.putUChar("idx", gPageIndex);
-  prefs.end();
-}
-
 inline void pagesSave() {
   Preferences prefs;
   prefs.begin("pages", false);
@@ -517,6 +570,7 @@ inline void pagesSave() {
     prefs.putString(key, gLastSceneRid[i]);
   }
   prefs.end();
+  pagesMarkSaved();
 }
 
 inline void pagesClear() {
@@ -542,6 +596,7 @@ inline void pagesForgetSaved() {
   gScreenTimeoutSec = kScreenTimeoutDefault;
   pagesClearLastScenes();
   pagesEnsureDefault();
+  pagesMarkSaved();
 }
 
 inline void pagesLoad() {
@@ -565,6 +620,7 @@ inline void pagesLoad() {
   gPageCount = n;
   pagesEnsureDefault();
   pagesClampIndex();
+  pagesMarkSaved();
   LOG("NVS pages count=%u idx=%u axis=%s timeout=%u\n", gPageCount, gPageIndex,
                 gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal", gScreenTimeoutSec);
 }
@@ -624,7 +680,7 @@ inline void pagesGo(int delta) {
     idx += n;
   }
   gPageIndex = static_cast<uint8_t>(idx);
-  pagesSaveIndex();
+  pagesMarkDirty();
   gNeedHueState = true;
 }
 

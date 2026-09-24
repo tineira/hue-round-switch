@@ -2,6 +2,7 @@
 
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
+#include <atomic>
 #include "config.h"
 #include "json_util.h"
 
@@ -16,8 +17,8 @@
 extern String gHueBridgeIp;
 extern String gHueAppKey;
 
-// Short copy under a mutex: USB re-pair and HUECLR write these Strings
-// from a different context than hueHttp.
+// Short copy under a mutex: USB HUECLR / HUEPAIR write these Strings from the loop,
+// the hueJob task reads them.
 inline SemaphoreHandle_t gHueStrMux = nullptr;
 
 inline void hueStrEnsure() {
@@ -57,42 +58,186 @@ inline bool hueRamReady() {
   return ok;
 }
 
-// 401/403 with the application key: the key no longer works. RAM, lost at boot.
-// Discovery or /api/config (no key) do not count. A 200 with the key recovers.
-// Timeout, 5xx or Bridge down neither set nor clear the flag.
-inline volatile bool gHueAuthRejected = false;
+// Link to the Bridge. Only the hueJob task writes it; the loop reads it to pick a screen.
+enum HueLink : uint8_t {
+  LINK_START = 0,    // Not reached yet since boot (or since HUECLR): "Loading"
+  LINK_SEARCHING,    // Bridge not found or not answering: "No Bridge", retried with backoff
+  LINK_PAIRING,      // No key, or the key was rejected twice: "Press Bridge button"
+  LINK_READY,        // A keyed request returned 200
+  LINK_UNREACHABLE,  // Was READY; the last keyed request timed out or got a 5xx. Ready stays.
+};
+
+inline std::atomic<uint8_t> gHueLink{LINK_START};
+// Consecutive 401/403 with the key (outside the grace window). Two flip READY to PAIRING.
+inline uint8_t gHueRejectCount = 0;
+// The saved key was rejected (not "no key"). PAIRING then also re-tries the old key.
+inline std::atomic<bool> gHueKeyRejected{false};
 inline unsigned long gHueAuthGraceUntil = 0;
 
 inline void hueAuthGraceArm(unsigned long ms) {
   gHueAuthGraceUntil = millis() + ms;
-  gHueAuthRejected = false;
+  gHueRejectCount = 0;
+  gHueKeyRejected = false;
 }
 
-inline bool hueAuthGraceOpen() {
-  return (long)(gHueAuthGraceUntil - millis()) > 0;
+inline bool hueAuthGraceOpen() { return (long)(gHueAuthGraceUntil - millis()) > 0; }
+
+inline bool hueLinkUsable() {
+  const uint8_t l = gHueLink;
+  return l == LINK_READY || l == LINK_UNREACHABLE;
 }
 
+// Every keyed request reports here (hueJob task only).
+// 2xx → READY. Timeout / -1 / 5xx → UNREACHABLE (only from READY). Two 401/403 → PAIRING.
 inline void hueNoteAuth(int code, const String *body, bool withKey) {
+  if (!withKey) {
+    return;
+  }
   if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
-    if (!withKey || hueAuthGraceOpen()) {
+    if (hueAuthGraceOpen()) {
       return;
     }
     if (body && body->indexOf("link button not pressed") >= 0) {
       return;
     }
-    gHueAuthRejected = true;
+    if (gHueRejectCount < 255) {
+      gHueRejectCount++;
+    }
+    LOG("Hue key rejected (%d) x%u\n", code, gHueRejectCount);
+    if (gHueRejectCount >= 2 && hueLinkUsable()) {
+      gHueKeyRejected = true;
+      gHueLink = LINK_PAIRING;
+    }
     return;
   }
-  if (withKey && code == HTTP_CODE_OK) {
-    gHueAuthRejected = false;
+  if (code >= 200 && code < 300) {
+    gHueRejectCount = 0;
+    if (gHueLink == LINK_UNREACHABLE) {
+      LOGLN("Hue link back");
+      gHueLink = LINK_READY;
+    }
+    return;
+  }
+  if ((code < 0 || code >= 500) && gHueLink == LINK_READY) {
+    LOG("Hue link unreachable (%d)\n", code);
+    gHueLink = LINK_UNREACHABLE;
   }
 }
 
-// The Bridge uses a self-signed certificate; Clip v2 requires local HTTPS.
-// setInsecure() skips validating that CA (LAN only, not cloud).
+// One HTTPS connection to the Bridge, kept alive between requests. Only the hueJob task
+// touches it. The Bridge uses a self-signed certificate; Clip v2 requires local HTTPS,
+// so setInsecure() skips validating that CA (LAN only, not cloud).
+static const unsigned long kHueConnIdleMs = 60000;
 
-inline int hueHttp(const String &url, const char *method, const char *body, String *response, bool withKey,
-                   bool insecure, int timeoutMs = 8000) {
+inline NetworkClientSecure *gHueTls = nullptr;
+inline HTTPClient *gHueConnHttp = nullptr;
+inline String gHueConnHost;
+inline unsigned long gHueConnLastMs = 0;
+
+inline void hueConnClose() {
+  if (gHueTls) {
+    gHueTls->stop();
+  }
+  gHueConnHost = "";
+}
+
+inline void hueConnIdleCheck() {
+  if (gHueConnHost.length() && millis() - gHueConnLastMs >= kHueConnIdleMs) {
+    hueConnClose();
+  }
+}
+
+inline bool hueUrlHost(const String &url, String *host) {
+  if (!url.startsWith("https://")) {
+    return false;
+  }
+  int end = url.indexOf('/', 8);
+  if (end < 0) {
+    end = url.length();
+  }
+  *host = url.substring(8, end);
+  return host->length() > 0;
+}
+
+// Keyed request on the kept-alive connection. A reused socket the Bridge already closed
+// fails fast with a negative code; that case is retried once on a fresh connection.
+inline int hueConnRequest(const String &url, const char *method, const char *body, String *response,
+                          Stream *sink, int timeoutMs) {
+  if (!gHueTls) {
+    gHueTls = new NetworkClientSecure();
+    gHueTls->setInsecure();
+    gHueConnHttp = new HTTPClient();
+  }
+  String host;
+  if (!hueUrlHost(url, &host)) {
+    return -1;
+  }
+  if (gHueConnHost.length() && gHueConnHost != host) {
+    hueConnClose();
+  }
+  hueConnIdleCheck();
+  hueStrLock();
+  const String key = gHueAppKey;
+  hueStrUnlock();
+  const bool sentKey = key.length() > 0;
+
+  int code = -1;
+  String denied;
+  for (uint8_t attempt = 0; attempt < 2; attempt++) {
+    const bool reused = gHueTls->connected();
+    const unsigned long t0 = millis();
+    HTTPClient &http = *gHueConnHttp;
+    if (!http.begin(*gHueTls, url)) {
+      return -1;
+    }
+    http.setReuse(true);
+    http.setConnectTimeout(3000);
+    http.setTimeout(timeoutMs > 0 ? timeoutMs : 8000);
+    if (sentKey) {
+      http.addHeader("hue-application-key", key);
+    }
+    if (body) {
+      http.addHeader("Content-Type", "application/json");
+    }
+    if (strcmp(method, "GET") == 0) {
+      code = http.GET();
+    } else if (strcmp(method, "POST") == 0) {
+      code = http.POST(body ? String(body) : String());
+    } else {
+      code = http.PUT(body ? String(body) : String());
+    }
+    if (code > 0) {
+      if (sink && code == HTTP_CODE_OK) {
+        http.writeToStream(sink);
+      } else if (response) {
+        *response = http.getString();
+      } else {
+        denied = http.getString();
+      }
+    }
+    http.end();
+    LOG("hue %s %s %d %lums %s\n", method, url.substring(8 + host.length()).c_str(), code, millis() - t0,
+        reused ? "reuse" : "new");
+    if (code > 0) {
+      gHueConnHost = host;
+      gHueConnLastMs = millis();
+      break;
+    }
+    hueConnClose();
+    if (!reused) {
+      break;
+    }
+  }
+  hueNoteAuth(code, response ? response : &denied, sentKey);
+  return code;
+}
+
+// One-shot request with its own TLS session: /api/config probe, pairing POST,
+// discovery.meethue.com. The kept-alive Bridge connection is closed first so there is
+// never more than one session to the Bridge.
+inline int hueHttpOnce(const String &url, const char *method, const char *body, String *response, bool insecure,
+                       int timeoutMs = 8000) {
+  hueConnClose();
   NetworkClientSecure client;
   if (insecure) {
     client.setInsecure();
@@ -103,74 +248,44 @@ inline int hueHttp(const String &url, const char *method, const char *body, Stri
   if (!http.begin(client, url)) {
     return -1;
   }
+  http.setReuse(false);
+  http.setConnectTimeout(3000);
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 8000);
-  String keyCopy;
-  if (withKey) {
-    hueStrLock();
-    keyCopy = gHueAppKey;
-    hueStrUnlock();
-  }
-  const bool sentKey = withKey && keyCopy.length() > 0;
-  if (sentKey) {
-    http.addHeader("hue-application-key", keyCopy);
-  }
   if (body) {
     http.addHeader("Content-Type", "application/json");
   }
   int code = -1;
   if (strcmp(method, "GET") == 0) {
     code = http.GET();
-  } else if (strcmp(method, "POST") == 0) {
-    code = http.POST(body ? String(body) : String());
   } else {
-    code = http.PUT(body ? String(body) : String());
+    code = http.POST(body ? String(body) : String());
   }
-  String denied;
-  const String *noted = nullptr;
   if (response) {
-    *response = http.getString();
-    noted = response;
-  } else if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
-    denied = http.getString();
-    noted = &denied;
+    *response = code > 0 ? http.getString() : String();
   }
   http.end();
-  hueNoteAuth(code, noted, sentKey);
   return code;
 }
 
-inline int hueClipStream(const char *resource, JsonDataSink &sink) {
+// Keyed Clip v2 request to the Bridge (hueJob task only).
+inline int hueHttp(const String &url, const char *method, const char *body, String *response,
+                   int timeoutMs = 8000) {
+  return hueConnRequest(url, method, body, response, nullptr, timeoutMs);
+}
+
+inline int hueClipStream(const char *resource, Stream &sink) {
   hueStrLock();
   const String ip = gHueBridgeIp;
-  const String key = gHueAppKey;
+  const bool haveKey = gHueAppKey.length() > 0;
   hueStrUnlock();
-  if (!ip.length() || !key.length() || !resource) {
+  if (!ip.length() || !haveKey || !resource) {
     return -1;
   }
   String url = "https://";
   url += ip;
   url += "/clip/v2/resource/";
   url += resource;
-  NetworkClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  if (!http.begin(client, url)) {
-    return -1;
-  }
-  http.setTimeout(20000);
-  http.addHeader("hue-application-key", key);
-  const int code = http.GET();
-  String denied;
-  const String *noted = nullptr;
-  if (code == HTTP_CODE_OK) {
-    http.writeToStream(&sink);
-  } else if (code == HTTP_CODE_UNAUTHORIZED || code == HTTP_CODE_FORBIDDEN) {
-    denied = http.getString();
-    noted = &denied;
-  }
-  http.end();
-  hueNoteAuth(code, noted, true);
-  return code;
+  return hueConnRequest(url, "GET", nullptr, nullptr, &sink, 20000);
 }
 
 inline String hueResourceUrl(const char *rtype, const char *rid) {
@@ -186,25 +301,18 @@ inline String hueResourceUrl(const char *rtype, const char *rid) {
   return url;
 }
 
-inline bool hueParseOn(const String &body, bool *on) {
-  return jsonHueOn(body.c_str(), on);
-}
-
 inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
   if (!hueRamReady() || !rtype || !rid || !on) {
-    LOGLN("Hue GET: begin failed");
     return false;
   }
   String body;
-  const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true);
-  LOG("Hue GET %s/%s %d\n", rtype, rid, code);
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, 4000);
   if (code != HTTP_CODE_OK) {
     LOGLN(body);
     return false;
   }
   if (!jsonHueOn(body.c_str(), on)) {
     LOGLN("Hue GET: could not parse on");
-    LOGLN(body);
     return false;
   }
   return true;
@@ -212,13 +320,11 @@ inline bool hueGetOn(const char *rtype, const char *rid, bool *on) {
 
 inline bool hueSetOn(const char *rtype, const char *rid, bool on) {
   if (!hueRamReady() || !rtype || !rid) {
-    LOGLN("Hue PUT: begin failed");
     return false;
   }
   const char *payload = on ? "{\"on\":{\"on\":true}}" : "{\"on\":{\"on\":false}}";
   String body;
-  const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true);
-  LOG("Hue PUT %s/%s %d -> %s\n", rtype, rid, code, on ? "on" : "off");
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body);
   if (code != HTTP_CODE_OK) {
     LOGLN(body);
     return false;
@@ -231,9 +337,8 @@ inline bool hueSceneActive(const char *rid, bool *active) {
     return false;
   }
   String body;
-  const int code = hueHttp(hueResourceUrl("scene", rid), "GET", nullptr, &body, true, true, 2500);
+  const int code = hueHttp(hueResourceUrl("scene", rid), "GET", nullptr, &body, 2500);
   if (code != HTTP_CODE_OK) {
-    LOG("Hue GET scene/%s %d\n", rid, code);
     return false;
   }
   return jsonHueSceneActive(body.c_str(), active);
@@ -241,33 +346,23 @@ inline bool hueSceneActive(const char *rid, bool *active) {
 
 inline int hueRecallSceneHttp(const char *rid) {
   if (!hueRamReady() || !rid || !rid[0]) {
-    LOGLN("Hue recall: begin failed");
     return -1;
   }
   String body;
-  const int code =
-      hueHttp(hueResourceUrl("scene", rid), "PUT", "{\"recall\":{\"action\":\"active\"}}", &body, true, true);
-  LOG("Hue recall scene/%s %d\n", rid, code);
+  const int code = hueHttp(hueResourceUrl("scene", rid), "PUT", "{\"recall\":{\"action\":\"active\"}}", &body);
   if (code != HTTP_CODE_OK && code != HTTP_CODE_NOT_FOUND) {
     LOGLN(body);
   }
   return code;
 }
 
-inline bool hueRecallScene(const char *rid) { return hueRecallSceneHttp(rid) == HTTP_CODE_OK; }
-
 inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *pct) {
   if (!hueRamReady() || !rtype || !rid || !rid[0]) {
     return false;
   }
   String body;
-  const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, true, true, 4000);
-  if (code == HTTP_CODE_NOT_FOUND) {
-    LOG("Hue GET state %s/%s 404 skip\n", rtype, rid);
-    return false;
-  }
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "GET", nullptr, &body, 4000);
   if (code != HTTP_CODE_OK) {
-    LOG("Hue GET state %s/%s %d\n", rtype, rid, code);
     return false;
   }
   bool parsed = false;
@@ -281,10 +376,6 @@ inline bool hueGetLightState(const char *rtype, const char *rid, bool *on, int *
     parsed = true;
   }
   return parsed;
-}
-
-inline bool hueGetBrightness(const char *rtype, const char *rid, int *pct) {
-  return hueGetLightState(rtype, rid, nullptr, pct);
 }
 
 // Brightness PUT. turnOn adds on.on=true (light set all off). 404 is skipped.
@@ -305,71 +396,10 @@ inline bool huePutDimming(const char *rtype, const char *rid, int pct, bool turn
     snprintf(payload, sizeof(payload), "{\"dimming\":{\"brightness\":%d}}", pct);
   }
   String body;
-  const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, true, true, 4000);
-  if (code == HTTP_CODE_NOT_FOUND) {
-    LOG("Hue PUT dim %s/%s 404 skip\n", rtype, rid);
-    return false;
-  }
+  const int code = hueHttp(hueResourceUrl(rtype, rid), "PUT", payload, &body, 4000);
   if (code != HTTP_CODE_OK) {
     LOG("Hue PUT dim %s/%s %d -> %d %s\n", rtype, rid, code, pct, body.c_str());
     return false;
   }
-  LOG("Hue dim %s/%s %d%%\n", rtype, rid, pct);
   return true;
-}
-
-inline bool hueSetBrightness(const char *rtype, const char *rid, int pct) {
-  return huePutDimming(rtype, rid, pct, true);
-}
-
-inline bool hueToggle(const char *rtype, const char *rid, bool *nowOn) {
-  bool on = false;
-  if (!hueGetOn(rtype, rid, &on)) {
-    return false;
-  }
-  if (!hueSetOn(rtype, rid, !on)) {
-    return false;
-  }
-  if (nowOn) {
-    *nowOn = !on;
-  }
-  return true;
-}
-
-inline bool hueExecute(const char *action, const char *rtype, const char *rid, bool *nowOn = nullptr) {
-  if (!action || !rtype || !rid || !rid[0]) {
-    return false;
-  }
-  if (strcmp(action, "on") == 0) {
-    if (!hueSetOn(rtype, rid, true)) {
-      return false;
-    }
-    if (nowOn) {
-      *nowOn = true;
-    }
-    return true;
-  }
-  if (strcmp(action, "off") == 0) {
-    if (!hueSetOn(rtype, rid, false)) {
-      return false;
-    }
-    if (nowOn) {
-      *nowOn = false;
-    }
-    return true;
-  }
-  if (strcmp(action, "recall_scene") == 0) {
-    if (!hueRecallScene(rid)) {
-      return false;
-    }
-    if (nowOn) {
-      *nowOn = true;
-    }
-    return true;
-  }
-  if (strcmp(action, "toggle") == 0) {
-    return hueToggle(rtype, rid, nowOn);
-  }
-  LOG("Hue execute: unknown action %s\n", action);
-  return false;
 }

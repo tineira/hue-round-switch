@@ -472,41 +472,31 @@ inline void usbCmdPair() {
     usbReply("HUEERR no-wifi");
     return;
   }
-  if (gHuePairBusy || gHuePairReq) {
+  if (huePairBusy()) {
     usbReply("HUEOK pair");
     return;
   }
-  if (!gHueTask) {
+  if (!huePairRequest()) {
     usbReply("HUEERR unknown");
     return;
   }
-  hueClearSavedKey();
-  hueStrLock();
-  gHuePairOutcome = 0;
-  hueStrUnlock();
-  gHuePairCancel = false;
-  gHuePairEpoch = gHueClrEpoch;
-  gHuePairAsync = true;
-  gHuePairBusy = true;
-  gHuePairReq = true;
-  gHuePairShowPending = true;
-  xTaskNotifyGive(gHueTask);
   usbReply("HUEOK pair");
 }
 
 inline void usbCmdClear() {
+  // Cancel first (the hueJob task aborts pairing / saving), wipe, then bump the epoch
+  // so the task restarts only once RAM and NVS are empty.
   gHuePairCancel = true;
-  gHueClrEpoch++;
-  if (gHueClrEpoch == 0) {
-    gHueClrEpoch = 1;
-  }
-  gHuePairShowPending = false;
-  gUsbWantWifiFail = true;
   wifiForgetSta();
   consoleForget();
   recipesForgetSaved();
   pagesForgetSaved();
   hueForgetSaved();
+  gHueClrEpoch++;
+  if (gHueClrEpoch == 0) {
+    gHueClrEpoch = 1;
+  }
+  hueJobNotify();
   usbReply("HUEOK clear");
 }
 

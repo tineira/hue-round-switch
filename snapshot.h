@@ -14,6 +14,9 @@ struct LightOwner {
   char ownerRid[40];
 };
 
+// Set by the hueJob task: runs waiting taps between resource streams.
+inline void (*gHueSnapYield)() = nullptr;
+
 inline LightOwner gOwners[kMaxOwners];
 inline uint8_t gOwnerCount = 0;
 
@@ -226,15 +229,24 @@ inline bool hueBuildSnapshot(String *lights, String *rooms, String *scenes) {
   }
 
   SnapBuild roomCtx{rooms, "room", 0};
+  if (gHueSnapYield) {
+    gHueSnapYield();
+  }
   if (!hueStreamResource("room", snapshotOnGroup, &roomCtx, nullptr)) {
     return false;
   }
   SnapBuild zoneCtx{rooms, "zone", 0};
+  if (gHueSnapYield) {
+    gHueSnapYield();
+  }
   if (!hueStreamResource("zone", snapshotOnGroup, &zoneCtx, nullptr)) {
     return false;
   }
 
   SnapBuild sceneCtx{scenes, nullptr, 0};
+  if (gHueSnapYield) {
+    gHueSnapYield();
+  }
   if (!hueStreamResource("scene", snapshotOnScene, &sceneCtx, nullptr)) {
     return false;
   }
