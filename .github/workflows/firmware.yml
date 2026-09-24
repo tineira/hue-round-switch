@@ -61,15 +61,14 @@ jobs:
             dist/installer/firmware.bin
           if-no-files-found: error
 
-      # Warn-only until the console serves firmware from uploads (docs/specs/firmware-uploads.md phase B).
       - name: Upload to console
         env:
           FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
         run: |
-          set +e -uo pipefail  # Actions runs bash -e; this step handles curl failures itself.
+          set -euo pipefail
           if [ -z "${FIRMWARE_UPLOAD_TOKEN:-}" ]; then
-            echo "FIRMWARE_UPLOAD_TOKEN missing; skip console upload"
-            exit 0
+            echo "::error::FIRMWARE_UPLOAD_TOKEN missing; cannot upload the release to the console."
+            exit 1
           fi
           # Notes: the CHANGELOG.md section whose ### heading starts with VERSION,
           # up to the next ### or ## heading, HTML comments removed, blank edges trimmed.
@@ -81,12 +80,12 @@ jobs:
             | sed -e '/[^[:space:]]/,$!d' \
             | sed -e ':a' -e '/^[[:space:]\n]*$/{$d;N;ba' -e '}' > notes.md
           if ! grep -q '[^[:space:]]' notes.md; then
-            echo "::warning::No CHANGELOG.md entry for ${VERSION}; a release must have notes. Skipping console upload."
-            exit 0
+            echo "::error::No CHANGELOG.md entry for ${VERSION}. Add a '### ${VERSION} — YYYY-MM-DD' section in the commit that bumps FIRMWARE_VERSION."
+            exit 1
           fi
           echo "Notes for ${VERSION}:"
           cat notes.md
-          code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://hue.tineira.com/api/firmware/round" \
+          if ! code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://hue.tineira.com/api/firmware/round" \
             -H "Authorization: Bearer $FIRMWARE_UPLOAD_TOKEN" \
             -F "version=$VERSION" \
             -F "commit=$GITHUB_SHA" \
@@ -94,20 +93,22 @@ jobs:
             -F "bootloader.bin=@dist/installer/bootloader.bin" \
             -F "partitions.bin=@dist/installer/partitions.bin" \
             -F "boot_app0.bin=@dist/installer/boot_app0.bin" \
-            -F "firmware.bin=@dist/installer/firmware.bin")
-          rc=$?
-          echo "HTTP ${code}"
-          cat resp.json 2>/dev/null; echo
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning::Console upload failed (curl exit ${rc})."
-            exit 0
+            -F "firmware.bin=@dist/installer/firmware.bin"); then
+            echo "::error::Console upload failed: curl could not complete the request."
+            cat resp.json 2>/dev/null || true
+            exit 1
           fi
+          body=$(cat resp.json 2>/dev/null || true)
+          echo "HTTP ${code}"
+          echo "${body}"
           case "$code" in
             200|201) echo "Uploaded round ${VERSION} to the console." ;;
             409) echo "::warning::version_exists: round ${VERSION} bins are already released with different bytes; notes were updated. Bump FIRMWARE_VERSION to ship new bins." ;;
-            *) echo "::warning::Console upload returned HTTP ${code}; not uploaded." ;;
+            *)
+              echo "::error::Console upload returned HTTP ${code}: ${body}"
+              exit 1
+              ;;
           esac
-          exit 0
 
       - name: Publish rolling usb-installer release
         env:
@@ -127,23 +128,3 @@ jobs:
             dist/installer/partitions.bin \
             dist/installer/boot_app0.bin \
             dist/installer/firmware.bin
-
-      - name: Notify console repo
-        env:
-          CONSOLE_REPO_TOKEN: ${{ secrets.CONSOLE_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CONSOLE_REPO_TOKEN:-}" ]; then
-            echo "CONSOLE_REPO_TOKEN missing; skip repository_dispatch"
-            exit 0
-          fi
-          GH_TOKEN="$CONSOLE_REPO_TOKEN" gh api repos/tineira/hue-switch-console/dispatches \
-            --input - <<EOF
-          {
-            "event_type": "firmware-bins",
-            "client_payload": {
-              "product": "round",
-              "version": "${VERSION}"
-            }
-          }
-          EOF
