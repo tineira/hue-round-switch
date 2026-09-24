@@ -66,7 +66,7 @@ jobs:
         env:
           FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail  # Actions runs bash -e; this step handles curl failures itself.
           if [ -z "${FIRMWARE_UPLOAD_TOKEN:-}" ]; then
             echo "FIRMWARE_UPLOAD_TOKEN missing; skip console upload"
             exit 0
