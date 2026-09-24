@@ -35,10 +35,14 @@ static const float kLevelSpanDeg = 270.0f;
 static const int16_t kNameY = 92;
 static const int16_t kSceneY = 114;
 static const int16_t kDotsY = 197;
-static const unsigned long kDoubleTapMs = 350;
-// Lift inferred from a repeated point with INT high. Measure with SERIAL_DEBUG ("lift ...")
-// before lowering it: too short splits a still press into two taps.
-static const unsigned long kTouchStaleLiftMs = 400;
+// Counted from the detected lift. The lift is now seen ~30 ms after the finger leaves
+// (was 80-400 ms), so the window grew to keep slow double taps reaching it.
+static const unsigned long kDoubleTapMs = 400;
+// INT (D7) stays low while a finger is on the glass; Seeed's driver reads INT high as
+// released. 30 ms of INT high ends the touch, even if the chip still repeats the last
+// point. A fast double tap is then two touches, not one long press.
+static const unsigned long kTouchLiftMs = 30;
+static const unsigned long kTouchRearmMs = 15;
 static const int16_t kSwipeMinPx = 40;
 static const uint16_t kColYellow = 0xFFE0;
 static const int16_t kTokenMarkY = 229;  // In the ring's gap at 6 o'clock
@@ -76,6 +80,7 @@ inline unsigned long gUiFlashUntil = 0;
 inline bool gRefreshAt = false;
 inline unsigned long gRefreshAtMs = 0;
 inline unsigned long gTouchLastPtMs = 0;
+inline unsigned long gTouchIrqLowMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
 inline int16_t gTouchX = -1;
 inline int16_t gTouchY = -1;
@@ -997,7 +1002,7 @@ inline void uiTouchEnd(unsigned long now) {
     gDimHavePct = false;
     gSecondTap = false;
     gTapWaitDouble = false;
-    gTouchIgnoreUntil = now + 40;
+    gTouchIgnoreUntil = now + kTouchRearmMs;
     return;
   }
   if (gDimDragging) {
@@ -1015,7 +1020,7 @@ inline void uiTouchEnd(unsigned long now) {
   gUiPressed = false;
   gTouchMode = TOUCH_IDLE;
   gSwipeDone = false;
-  gTouchIgnoreUntil = now + 40;
+  gTouchIgnoreUntil = now + kTouchRearmMs;
 
   bool fired = false;
   if (wasCenter && !swiped && (gUi == UI_READY || gUi == UI_EMPTY)) {
@@ -1045,6 +1050,9 @@ inline void uiTouchEnd(unsigned long now) {
 
 inline void uiPollTouch(unsigned long now) {
   const bool irq = touchIrqPressed();
+  if (irq) {
+    gTouchIrqLowMs = now;
+  }
   int16_t x = 0, y = 0;
   bool hasPt = false;
   if (irq || gTouchDown) {
@@ -1073,14 +1081,13 @@ inline void uiPollTouch(unsigned long now) {
   }
 
   if (gTouchDown) {
-    if (!hasPt && (now - gTouchLastPtMs) >= 80) {
-      LOG("lift no-point %lums\n", now - gTouchLastPtMs);
+    if (!irq && (now - gTouchIrqLowMs) >= kTouchLiftMs) {
+      LOG("lift int-high %lums\n", now - gTouchIrqLowMs);
       uiTouchEnd(now);
       return;
     }
-    // The chip can keep reporting the last point after the finger leaves (INT high).
-    if (hasPt && !irq && !moved && (now - gTouchLastPtMs) >= kTouchStaleLiftMs) {
-      LOG("lift stale-point raw %u,%u %lums\n", gTouchRawX, gTouchRawY, now - gTouchLastPtMs);
+    if (!hasPt && (now - gTouchLastPtMs) >= 80) {
+      LOG("lift no-point %lums\n", now - gTouchLastPtMs);
       uiTouchEnd(now);
       return;
     }

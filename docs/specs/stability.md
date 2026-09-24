@@ -147,7 +147,7 @@ Rules:
 
 ### 4.7 Touch
 
-- Measure first (§6). If the chip keeps reporting points after the lift, infer the lift from INT going high for ≥ 60 ms, not from 400 ms without movement. **0.5.27 logs each lift and why it was inferred (`lift no-point` / `lift stale-point`), but keeps the 400 ms (`kTouchStaleLiftMs`).** Lowering it without data risks splitting a still press into two taps.
+- Infer the lift from INT going high, not from 400 ms without movement. 0.5.27 kept the old 80 / 400 ms rules. Once taps got faster, a quick double tap landed inside that wait and merged into one long press, which fired as a single tap. **0.5.28** ends the touch after 30 ms of INT high (`kTouchLiftMs`), the signal Seeed's own driver uses (1 ms there). The re-arm gap after a lift drops from 40 to 15 ms. The double-tap window grows from 350 to 400 ms, counted from the detected lift, so slow double taps still reach it (the old effective window was about 80 + 350 ms from the real lift). The 80 ms no-point rule stays as a fallback.
 - Decide the coordinate range from the chip at boot, or after at least 3 consistent frames above 127. Never switch it on one frame, and reject frames with out-of-range values.
 - Treat a start between 88 and 96 px as center on a page without a dimmer, and as ring on a page with one. No dead band.
 - ~~On the error screen, a touch dismisses the error.~~ Dropped: a failed command no longer shows the error screen (§10.2), so nothing swallows touches.
@@ -223,7 +223,7 @@ Per `AGENTS.md`, these are reported, not edited:
 - [x] §4.4 scene cursor at arm time, lazy NVS; toggle resolution; results kept for bookkeeping
 - [x] §4.5 readiness state machine; BOOT re-pair through the worker
 - [x] §4.6 Wi-Fi never blocks the loop
-- [ ] §4.7 touch fixes: range latch and dead band done; lift timing waits for the §6 measurement
+- [x] §4.7 touch fixes: range latch and dead band (0.5.27); lift from INT high (0.5.28)
 - [x] §4.8 console 401 does not block local control
 - [x] §4.9 ownership rules; queue for the config body; atomics
 - [x] `FIRMWARE_VERSION` bumped (0.5.27); `## Round` changelog entry in the console tree (user-facing wording)
