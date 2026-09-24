@@ -10,7 +10,6 @@ This firmware is one of several switches for one console. The console repo `C:\U
 
 - `docs/device-api.md`: endpoints, auth, payloads, error codes. Authoritative.
 - `docs/definitions.md`: product model (recipes, channels, pages).
-- `docs/changelog.md`: user-facing release notes (this product's section).
 - `docs/specs/`: cross-repo specs, each with a checklist per repo.
 
 Rules:
@@ -55,9 +54,9 @@ arduino-cli monitor -p COMx -c baudrate=115200
 
 Replace `COMx` with the XIAO port (`arduino-cli board list`, typically COM4 on HWCDC). First flash on a new S3 may need BOOT held while plugging USB. After HWCDC is on the chip, later uploads use DTR on that same COM — no BOOT.
 
-USB installer images: a push to `main` runs `.github/workflows/firmware.yml` (builds with `SERIAL_DEBUG` 0, publishes the `usb-installer` release, and, if `CONSOLE_REPO_TOKEN` is set, triggers the console's `sync-firmware-bins.yml`, which copies the four parts into `public/firmware/round/` and sets `manifest.json` `version`). Fallback without the secret: run **Sync USB installer bins** in the console by hand, or copy the four parts yourself and set `version` to `FIRMWARE_VERSION`. Console agents must not revert that folder; tell them in the same recorte. The wizard shows that version, not this sketch until those files are in the console repo (and deployed).
+Releases: a push to `main` runs `.github/workflows/firmware.yml`. It builds with `SERIAL_DEBUG` 0 and uploads the four installer parts to the console (`POST https://hue.tineira.com/api/firmware/round`, secret `FIRMWARE_UPLOAD_TOKEN`) with this version's `CHANGELOG.md` entry as the notes; the console serves `/install` from that upload. Same bins and version again: no change. Different bins under the same version: rejected, so bump `FIRMWARE_VERSION`. Until the console switches over (`docs/specs/firmware-uploads.md` phase B), the upload only warns on failure, and the old path still runs: the `usb-installer` release plus, if `CONSOLE_REPO_TOKEN` is set, the console's `sync-firmware-bins.yml`, which copies the parts into `public/firmware/round/`. Console agents must not revert that folder.
 
-Changelog: when `FIRMWARE_VERSION` changes, add a `### X.Y.Z — YYYY-MM-DD` heading under `## Round` in the **console** tree `docs/changelog.md`, with the `<!-- commit -->` marker above it, in the same recorte. Write each bullet as what changed for the person using the switch (what they see or can now do), not how the code changed: no function names, macros, USB command names, NVS keys, or GPIO numbers. Example: "The switch remembers the Wi-Fi network you saved during setup after it restarts." Not: "Reconnect stored Wi-Fi through the Arduino STA API."
+Changelog: when `FIRMWARE_VERSION` changes, add a `### X.Y.Z — YYYY-MM-DD` heading at the top of this repo's `CHANGELOG.md` in the same commit (not in the console's `docs/changelog.md`; the console still owns the contract docs above). Without an entry the console rejects the upload. Write each bullet as what changed for the person using the switch (what they see or can now do), not how the code changed: no function names, macros, USB command names, NVS keys, or GPIO numbers. Example: "The switch remembers the Wi-Fi network you saved during setup after it restarts." Not: "Reconnect stored Wi-Fi through the Arduino STA API."
 
 ## Arduino IDE 2.3.10
 

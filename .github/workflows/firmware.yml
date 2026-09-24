@@ -61,6 +61,54 @@ jobs:
             dist/installer/firmware.bin
           if-no-files-found: error
 
+      # Warn-only until the console serves firmware from uploads (docs/specs/firmware-uploads.md phase B).
+      - name: Upload to console
+        env:
+          FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${FIRMWARE_UPLOAD_TOKEN:-}" ]; then
+            echo "FIRMWARE_UPLOAD_TOKEN missing; skip console upload"
+            exit 0
+          fi
+          # Notes: the CHANGELOG.md section whose ### heading starts with VERSION,
+          # up to the next ### or ## heading, HTML comments removed, blank edges trimmed.
+          awk -v v="$VERSION" '
+            /^#{2,3} / { if (f) exit; if (index($0, "### " v) == 1 && substr($0, length("### " v) + 1, 1) !~ /[0-9.]/) { f = 1; next } }
+            f { print }
+          ' CHANGELOG.md | tr -d '\r' \
+            | sed -e 's/<!--.*-->//g' -e '/<!--/,/-->/d' \
+            | sed -e '/[^[:space:]]/,$!d' \
+            | sed -e ':a' -e '/^[[:space:]\n]*$/{$d;N;ba' -e '}' > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::warning::No CHANGELOG.md entry for ${VERSION}; a release must have notes. Skipping console upload."
+            exit 0
+          fi
+          echo "Notes for ${VERSION}:"
+          cat notes.md
+          code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://hue.tineira.com/api/firmware/round" \
+            -H "Authorization: Bearer $FIRMWARE_UPLOAD_TOKEN" \
+            -F "version=$VERSION" \
+            -F "commit=$GITHUB_SHA" \
+            -F "notes=<notes.md" \
+            -F "bootloader.bin=@dist/installer/bootloader.bin" \
+            -F "partitions.bin=@dist/installer/partitions.bin" \
+            -F "boot_app0.bin=@dist/installer/boot_app0.bin" \
+            -F "firmware.bin=@dist/installer/firmware.bin")
+          rc=$?
+          echo "HTTP ${code}"
+          cat resp.json 2>/dev/null; echo
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::Console upload failed (curl exit ${rc})."
+            exit 0
+          fi
+          case "$code" in
+            200|201) echo "Uploaded round ${VERSION} to the console." ;;
+            409) echo "::warning::version_exists: round ${VERSION} bins are already released with different bytes; notes were updated. Bump FIRMWARE_VERSION to ship new bins." ;;
+            *) echo "::warning::Console upload returned HTTP ${code}; not uploaded." ;;
+          esac
+          exit 0
+
       - name: Publish rolling usb-installer release
         env:
           GH_TOKEN: ${{ github.token }}
