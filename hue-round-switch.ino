@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.29"
+#define FIRMWARE_VERSION "0.5.30"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 

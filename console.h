@@ -13,7 +13,7 @@
 #include "snapshot.h"
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.29"
+#define FIRMWARE_VERSION "0.5.30"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;

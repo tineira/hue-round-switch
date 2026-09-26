@@ -2,6 +2,10 @@
 
 User-facing release notes for the Round switch. One `### <version> — <date>` heading per `FIRMWARE_VERSION`, written in the same commit that bumps `FIRMWARE_VERSION`, in the wording of the person using the switch. CI sends the entry for the built version to the console with the upload.
 
+### 0.5.30 — 2026-09-26
+
+- The Token rejected screen now points to Setup, the console page's current name.
+
 ### 0.5.29 — 2026-09-26
 
 - The console shows whether the switch has your latest settings.

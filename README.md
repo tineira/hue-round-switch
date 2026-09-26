@@ -8,7 +8,7 @@ The contract this firmware implements lives in the console repo: `hue-switch-con
 
 ## Setup
 
-1. **Product:** flash and provision from Chrome on [hue.tineira.com](https://hue.tineira.com) → Devices (USB, no Arduino). Improv saves the 2.4 GHz network and `HUESET` stores the token/url in NVS `console`. None of that is compiled in.
+1. **Product:** flash and provision from Chrome on [hue.tineira.com → Setup](https://hue.tineira.com/setup) (USB, no Arduino). Improv saves the 2.4 GHz network and `HUESET` stores the token/url in NVS `console`. None of that is compiled in.
 2. **Development:** copy `config.example.h` to `config.h` (only `SERIAL_DEBUG`). Provision the XIAO once from the console; `arduino-cli upload` does not erase NVS, so the network and token survive every flash.
 3. The XIAO finds the Bridge over mDNS and can pair the Hue key (screen: *Press the Bridge button*). Both are kept in flash.
 4. It registers with the console (`POST /api/device/register`) with `"product": "round"` and `channels: []`, and asks for its config (`GET /api/device/config`: `pages[]`, recipes per `pageId`, `dim`).

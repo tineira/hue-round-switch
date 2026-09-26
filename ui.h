@@ -514,7 +514,7 @@ inline void uiPaint() {
   } else if (gUi == UI_NO_BRIDGE) {
     displayTextCenter("same LAN as Bridge", 166, 1, t->mute);
   } else if (gUi == UI_TOKEN) {
-    displayTextCenter("Set a new one in Devices", 166, 1, t->mute);
+    displayTextCenter("Set a new one in Setup", 166, 1, t->mute);
   }
 
   if (gUi == UI_READY) {
