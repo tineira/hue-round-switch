@@ -31,9 +31,9 @@ On the Round Display v1.1, the backlight slide switch (`D6`) must be **ON**. The
 
 ## Release
 
-A push to `main` **is a release**. `.github/workflows/firmware.yml` builds the product image, publishes the `usb-installer` GitHub Release, and triggers the console to pull the bins into `public/firmware/round/`. The Devices screen then offers that build to every Round plugged in over USB.
+A push to `main` **is a release**. `.github/workflows/firmware.yml` builds the product image (`SERIAL_DEBUG` 0), checks `THIRD_PARTY.json` against `sketch.yaml`, and uploads the four installer parts to the console (`POST https://hue.tineira.com/api/firmware/round`) with this version's `CHANGELOG.md` entry as release notes and `THIRD_PARTY.json` as credits. The console's USB installer then offers that build to every Round plugged in over USB. A missing token or notes, a credits mismatch, or an upload error fails the run. The workflow also keeps the `usb-installer` GitHub Release as a download link.
 
-- `FIRMWARE_VERSION` in `hue-round-switch.ino` is the version the console shows. Bump it for any change a board should pick up, and add a `## Round` entry to the console's `docs/changelog.md`.
+- `FIRMWARE_VERSION` in `hue-round-switch.ino` is the version the console shows. Bump it for any change a board should pick up, and add a `### X.Y.Z — YYYY-MM-DD` entry at the top of this repo's `CHANGELOG.md` in the same commit (not the console's `docs/changelog.md`). A push without a bump re-sends the notes only (`409 version_exists` warning).
+- [`THIRD_PARTY.json`](THIRD_PARTY.json) credits the core, ESP-IDF and every library linked into the image; the console shows it on `/credits`. CI fails if the core or any library pinned in `sketch.yaml` is missing from it or has a different version. Update it in the same commit as any core or library bump.
 - Image layout and offsets: [`docs/firmware-artifacts.md`](docs/firmware-artifacts.md).
-- [`THIRD_PARTY.json`](THIRD_PARTY.json) credits the core, ESP-IDF and every library linked into the image; CI sends it with the upload for the console's `/credits` page. It must list the core and every library pinned in `sketch.yaml` at the same version, or the run fails.
-- The pipeline needs the `CONSOLE_REPO_TOKEN` secret in this repo. Setup, rotation and troubleshooting: the console repo's `README.md`, "Firmware release pipeline".
+- The pipeline needs the `FIRMWARE_UPLOAD_TOKEN` secret in this repo. Setup, rotation and troubleshooting: the console repo's `README.md`, "Firmware release pipeline".
