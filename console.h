@@ -13,17 +13,29 @@
 #include "snapshot.h"
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.28"
+#define FIRMWARE_VERSION "0.5.29"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
 static const unsigned long kPollArmedMs = 60UL * 60UL * 1000UL;
+// X-Poll-Sec from the console is clamped to this range (config-sync spec §2.3).
+static const uint32_t kPollSecMin = 30;
+static const uint32_t kPollSecMax = 3600;
+// Topology (register) keeps the old hourly cadence even when the console polls faster.
+static const unsigned long kRegisterEveryMs = 60UL * 60UL * 1000UL;
 static const size_t kConsoleTokMax = 128;
 static const size_t kConsoleUrlMax = 128;
 
 inline bool gConsoleRegistered = false;
 inline unsigned long gConsoleLastPollMs = 0;
+inline unsigned long gConsoleLastRegisterMs = 0;
 inline bool gConsolePolledBoot = false;
+// Written by the console task after each config poll: seconds until the next poll, 0 = the
+// console did not say (older console), use kPollEmptyMs / kPollArmedMs.
+inline std::atomic<uint32_t> gConsolePollSec{0};
+// Loop-owned: set when consoleApplyConfig replaced NVS, so the next tick polls once more at
+// once and reports the new rev (§2.4).
+inline bool gConsoleConfirmPoll = false;
 inline char gConsoleTokNvs[kConsoleTokMax] = {0};
 inline char gConsoleUrlNvs[kConsoleUrlMax] = {0};
 
@@ -155,12 +167,40 @@ inline String consoleBaseUrl() {
   return url;
 }
 
-inline int consoleHttp(const char *method, const String &path, const char *body, String *response) {
+// X-Poll-Sec as whole seconds clamped to kPollSecMin..kPollSecMax, 0 if missing or not a number.
+inline uint32_t consoleParsePollSec(const String &h) {
+  const char *s = h.c_str();
+  while (*s == ' ') {
+    s++;
+  }
+  if (*s < '0' || *s > '9') {
+    return 0;
+  }
+  char *end = nullptr;
+  const unsigned long v = strtoul(s, &end, 10);
+  while (end && *end == ' ') {
+    end++;
+  }
+  if (!end || *end) {
+    return 0;
+  }
+  if (v < kPollSecMin) {
+    return kPollSecMin;
+  }
+  return v > kPollSecMax ? kPollSecMax : static_cast<uint32_t>(v);
+}
+
+// pollSec (optional): X-Poll-Sec of a 200 or 204, parsed by consoleParsePollSec.
+inline int consoleHttp(const char *method, const String &path, const char *body, String *response,
+                       uint32_t *pollSec = nullptr) {
   char tokLocal[kConsoleTokMax];
   portENTER_CRITICAL(&gConsoleMux);
   strlcpy(tokLocal, gConsoleTokNvs, sizeof(tokLocal));
   portEXIT_CRITICAL(&gConsoleMux);
   const char *tok = tokLocal;
+  if (pollSec) {
+    *pollSec = 0;
+  }
   const String url = consoleBaseUrl() + path;
   HTTPClient http;
   http.setTimeout(15000);
@@ -180,6 +220,10 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
 
   http.addHeader("Authorization", String("Bearer ") + tok);
   http.addHeader("Content-Type", "application/json");
+  if (pollSec) {
+    static const char *kPollHeader[] = {"X-Poll-Sec"};
+    http.collectHeaders(kPollHeader, 1);
+  }
 
   int code = -1;
   if (strcmp(method, "GET") == 0) {
@@ -187,7 +231,11 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
   } else {
     code = http.POST(body ? String(body) : String("{}"));
   }
-  if (response) {
+  if (pollSec && (code == HTTP_CODE_OK || code == HTTP_CODE_NO_CONTENT)) {
+    *pollSec = consoleParsePollSec(http.header("X-Poll-Sec"));
+  }
+  // 204 has no body; reading one without Content-Length would wait for the socket to close.
+  if (response && code != HTTP_CODE_NO_CONTENT) {
     *response = http.getString();
   }
   http.end();
@@ -272,9 +320,28 @@ inline void consoleFetchConfigHttp() {
   const uint32_t epoch = gConsoleEpoch;
   String path = "/api/device/config?mac=";
   path += deviceMacHex();
+  // rev lets the console answer 204 when nothing changed. Read after any apply the loop did
+  // before posting this job (the post goes through gConsoleMux). After a Bridge change the
+  // loop wants the full body even at an equal rev, so rev is left out then.
+  if (!gRecipesBidReset) {
+    char revBuf[16];
+    snprintf(revBuf, sizeof(revBuf), "&rev=%lu", static_cast<unsigned long>(gRecipeRev));
+    path += revBuf;
+  }
   String body;
-  const int code = consoleHttp("GET", path, nullptr, &body);
-  LOG("console GET config %d\n", code);
+  uint32_t pollSec = 0;
+  const int code = consoleHttp("GET", path, nullptr, &body, &pollSec);
+  LOG("console GET config %d poll %us\n", code, static_cast<unsigned>(pollSec));
+  if (code == HTTP_CODE_OK || code == HTTP_CODE_NO_CONTENT) {
+    gConsolePollSec = pollSec;
+  } else if (code == HTTP_CODE_UNAUTHORIZED) {
+    gConsolePollSec = kPollSecMax;
+  }
+  // Other errors keep the last interval, as before.
+  if (code == HTTP_CODE_NO_CONTENT) {
+    // Same rev as NVS: keep it, nothing to parse or hand to the loop.
+    return;
+  }
   if (code != HTTP_CODE_OK) {
     if (code == HTTP_CODE_UNAUTHORIZED) {
       LOGLN("console unauthorized — NVS recipes kept");
@@ -303,6 +370,8 @@ inline void consoleForget() {
   gConsolePolledBoot = false;
   gConsoleAuthRejected = false;
   gNeedConsoleSync = false;
+  gConsoleConfirmPoll = false;
+  gConsolePollSec = 0;
   gConsoleEpoch++;
   if (gConsoleEpoch == 0) {
     gConsoleEpoch = 1;
@@ -348,6 +417,8 @@ inline void consoleApplyConfig(const char *body) {
   pagesSave();
   gNeedHueState = true;
   gNeedFullPaint = true;
+  // Poll once more right away so the console sees the new rev (answered with 204).
+  gConsoleConfirmPoll = true;
   LOG("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
 }
 
@@ -401,6 +472,7 @@ inline void consoleBootSync() {
     return;
   }
   gConsoleLastPollMs = millis();
+  gConsoleLastRegisterMs = gConsoleLastPollMs;
   gConsolePolledBoot = true;
   consoleJobPost(true);
 }
@@ -424,17 +496,29 @@ inline void consolePollTick(unsigned long now) {
     gConsoleRegistered = false;
     doRegister = true;
     due = true;
+  } else if (gConsoleConfirmPoll) {
+    // Config only. The job reads gRecipeRev, already the rev just applied.
+    due = true;
   } else {
-    const unsigned long interval = (gRecipeCount == 0) ? kPollEmptyMs : kPollArmedMs;
+    // The console paces polls (X-Poll-Sec); an older console leaves the old constants.
+    const uint32_t pollSec = gConsolePollSec;
+    const unsigned long interval =
+        pollSec ? pollSec * 1000UL : ((gRecipeCount == 0) ? kPollEmptyMs : kPollArmedMs);
     if (!gConsolePolledBoot || (now - gConsoleLastPollMs) >= interval) {
       due = true;
-      doRegister = !gConsoleRegistered || gRecipeCount > 0;
+      // Topology stays hourly when armed, however often config is polled.
+      doRegister = !gConsoleRegistered ||
+                   (gRecipeCount > 0 && (now - gConsoleLastRegisterMs) >= kRegisterEveryMs);
     }
   }
   if (!due) {
     return;
   }
+  gConsoleConfirmPoll = false;
   gConsoleLastPollMs = now;
   gConsolePolledBoot = true;
+  if (doRegister) {
+    gConsoleLastRegisterMs = now;
+  }
   consoleJobPost(doRegister);
 }

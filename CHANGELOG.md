@@ -2,6 +2,11 @@
 
 User-facing release notes for the Round switch. One `### <version> — <date>` heading per `FIRMWARE_VERSION`, written in the same commit that bumps `FIRMWARE_VERSION`, in the wording of the person using the switch. CI sends the entry for the built version to the console with the upload.
 
+### 0.5.29 — 2026-09-26
+
+- The console shows whether the switch has your latest settings.
+- Changes you save in the console reach the switch in about 30 seconds while you are editing it, and within about 5 minutes otherwise, instead of up to an hour.
+
 ### 0.5.28 — 2026-09-24
 
 - A quick double tap counts as a double tap instead of a single tap.
