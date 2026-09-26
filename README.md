@@ -35,4 +35,5 @@ A push to `main` **is a release**. `.github/workflows/firmware.yml` builds the p
 
 - `FIRMWARE_VERSION` in `hue-round-switch.ino` is the version the console shows. Bump it for any change a board should pick up, and add a `## Round` entry to the console's `docs/changelog.md`.
 - Image layout and offsets: [`docs/firmware-artifacts.md`](docs/firmware-artifacts.md).
+- [`THIRD_PARTY.json`](THIRD_PARTY.json) credits the core, ESP-IDF and every library linked into the image; CI sends it with the upload for the console's `/credits` page. It must list the core and every library pinned in `sketch.yaml` at the same version, or the run fails.
 - The pipeline needs the `CONSOLE_REPO_TOKEN` secret in this repo. Setup, rotation and troubleshooting: the console repo's `README.md`, "Firmware release pipeline".
