@@ -6,7 +6,7 @@ Same console as `hue-simple-switch` (`https://hue.tineira.com`). This board is a
 
 ## Contract
 
-This firmware is one of several switches for one console. The console repo `C:\Users\tinei\hue-switch-console` owns the contract:
+This firmware is one of several switches for one console. The console repo [`hue-switch-console`](https://github.com/tineira/hue-switch-console) owns the contract. Local checkout paths on the maintainer's machine are in `AGENTS.local.md` (gitignored) when it exists; read it to find the sibling repos.
 
 - `docs/device-api.md`: endpoints, auth, payloads, error codes. Authoritative.
 - `docs/definitions.md`: product model (recipes, channels, pages).
@@ -16,20 +16,20 @@ Rules:
 
 - Do not change what this firmware sends to or expects from the console (endpoints, JSON fields, error handling, NVS keys the console writes over USB) unless `docs/device-api.md` or an approved spec in `docs/specs/` says so. If the work needs a protocol change, stop and propose it for the console repo; do not invent it here.
 - When working from a cross-repo spec, do only this repo's checklist section and tick it. The console ships first and stays backward compatible, so boards already on the wall keep working.
-- Read the console docs from that path; do not copy them into this tree.
-- The other switch firmwares (`C:\Users\tinei\Arduino\hue-round-switch`, `hue-simple-switch`, and any later ones) implement the same contract. Do not edit them from this repo. If behavior both should share differs, say so.
+- Read the console docs from its checkout (or GitHub); do not copy them into this tree.
+- The other switch firmwares (`hue-round-switch`, `hue-simple-switch`, and any later ones) implement the same contract. Do not edit them from this repo. If behavior both should share differs, say so.
 
 ## Hardware
 
 - Board: Seeed Studio XIAO ESP32-S3 (not Sense, not Plus, unless the user says otherwise)
 - Arduino IDE board name: `XIAO_ESP32S3`
 - FQBN: `esp32:esp32:XIAO_ESP32S3`
-- Core: Arduino-ESP32 **3.3.12** (already installed in `%LOCALAPPDATA%\Arduino15`)
+- Core: Arduino-ESP32 **3.3.12** (pinned by the `sketch.yaml` profile)
 - Flash: 8 MB, PSRAM: 8 MB OPI. Default 8 MB partition (3 MB APP). USB CDC on boot: Enabled. USB Mode: **Hardware CDC and JTAG** (same COM for flash; DTR reset works without BOOT). Closing Serial Monitor resets the S3 (silicon). `Serial.begin` always (Improv + `HUESET`). `SERIAL_DEBUG` in `config.h`: 0 = no USB logs (product); 1 = USB logs (dev; mixes with Improv).
 - Display: Seeed Studio Round Display for XIAO — 1.28" 240×240 GC9A01, capacitive touch CHSC6X (I2C `0x2E`, INT `D7`). Backlight `D6` (v1.1 slide switch must be ON).
 - Wi-Fi: 2.4 GHz only.
 
-This sketch lives in the Arduino IDE sketchbook (`directories.user` = `C:\Users\tinei\Arduino`). The parent folder is **not** a git repo. Do not mix with GigaDash (`OneDrive\Documents\Arduino`) and do not edit TFT_eSPI `User_Setup` there.
+This sketch lives in the Arduino IDE sketchbook (`arduino-cli config get directories.user`). The sketchbook folder itself is **not** a git repo. This sketch does not use TFT_eSPI; do not edit another project's TFT_eSPI `User_Setup` for it.
 
 ## Secrets
 
@@ -44,7 +44,7 @@ If `config.h` is missing: `copy config.example.h config.h` and edit it.
 
 Use the same Arduino15 data dir as the IDE so the 3.3.12 core is reused.
 
-Graphics library: **GFX Library for Arduino** (`Arduino_GFX`) in `C:\Users\tinei\Arduino\libraries` (this sketchbook). Do not install it under OneDrive/GigaDash.
+Graphics library: **GFX Library for Arduino** (`Arduino_GFX`), pinned in `sketch.yaml`. With the IDE, install it in this sketchbook's `libraries` folder.
 
 ```
 arduino-cli compile --profile xiao-s3 .
@@ -65,7 +65,7 @@ Changelog: when `FIRMWARE_VERSION` changes, add a `### X.Y.Z — YYYY-MM-DD` hea
 - File → Open this folder (`hue-round-switch.ino`)
 - Board: `XIAO_ESP32S3` (esp32)
 - PSRAM: OPI PSRAM. USB CDC on boot: Enabled. USB Mode: Hardware CDC and JTAG. Flash: 8 MB. `SERIAL_DEBUG` in `config.h`.
-- Libraries: ESP32 core + Arduino_GFX from this sketchbook. Not LVGL. Not GigaDash TFT_eSPI.
+- Libraries: ESP32 core + Arduino_GFX from this sketchbook. Not LVGL. Not TFT_eSPI.
 
 ## Pages (not GPIO)
 

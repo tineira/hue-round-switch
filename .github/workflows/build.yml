@@ -1,0 +1,28 @@
+name: build
+
+# Compile check for pull requests. Build only: no upload, no release, no secrets.
+# The release is firmware.yml, on push to main.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Product config.h (no USB logs)
+        run: |
+          printf '%s\n' \
+            '#pragma once' \
+            '#ifndef SERIAL_DEBUG' \
+            '#define SERIAL_DEBUG 0' \
+            '#endif' > config.h
+
+      - name: Compile
+        run: arduino-cli compile --profile xiao-s3 .

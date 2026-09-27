@@ -23,7 +23,7 @@ arduino-cli compile --profile xiao-s3 .
 arduino-cli upload  --profile xiao-s3 -p COMx .
 ```
 
-Display library: `GFX Library for Arduino` in `C:\Users\tinei\Arduino\libraries` (do not mix with the GigaDash / TFT_eSPI install in OneDrive).
+Display library: `GFX Library for Arduino` 1.6.8, pinned in `sketch.yaml` (arduino-cli installs it; with the IDE, use the Library Manager). This sketch does not use TFT_eSPI.
 
 On the Round Display v1.1, the backlight slide switch (`D6`) must be **ON**. The XIAO's USB-C points away from the circle.
 
@@ -37,6 +37,10 @@ A push to `main` **is a release**. `.github/workflows/firmware.yml` builds the p
 - [`THIRD_PARTY.json`](THIRD_PARTY.json) credits the core, ESP-IDF and every library linked into the image; the console shows it on `/credits`. CI fails if the core or any library pinned in `sketch.yaml` is missing from it or has a different version. Update it in the same commit as any core or library bump.
 - Image layout and offsets: [`docs/firmware-artifacts.md`](docs/firmware-artifacts.md).
 - The pipeline needs the `FIRMWARE_UPLOAD_TOKEN` secret in this repo. Setup, rotation and troubleshooting: the console repo's `README.md`, "Firmware release pipeline".
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and ideas go in GitHub issues.
 
 ## License
 
