@@ -270,7 +270,9 @@ inline bool recipesParseArray(const char *json, uint8_t *countOut) {
 static const char *kRecipeJsonKeys[] = {"json", "j1", "j2", "j3"};
 static const uint8_t kRecipeJsonParts = 4;
 
-inline void recipesSaveJson(Preferences &prefs) {
+// false if any chunk was not stored whole.
+inline bool recipesSaveJson(Preferences &prefs) {
+  bool ok = true;
   uint8_t idx = 0;
   for (uint8_t part = 0; part < kRecipeJsonParts; part++) {
     if (idx >= gRecipeCount) {
@@ -290,18 +292,39 @@ inline void recipesSaveJson(Preferences &prefs) {
         break;
       }
     }
-    prefs.putString(kRecipeJsonKeys[part], chunk);
+    ok = prefs.putString(kRecipeJsonKeys[part], chunk) == chunk.length() && ok;
     idx = static_cast<uint8_t>(idx + take);
   }
+  return ok && idx >= gRecipeCount;
 }
 
-inline void recipesSave() {
+// The recipes and their bridge id, without the rev. false if NVS did not take them.
+inline bool recipesSaveData() {
   Preferences prefs;
-  prefs.begin("recipes", false);
-  prefs.putUInt("rev", gRecipeRev);
-  prefs.putString("bid", gRecipeBridgeId);
-  recipesSaveJson(prefs);
+  if (!prefs.begin("recipes", false)) {
+    return false;
+  }
+  bool ok = prefs.putString("bid", gRecipeBridgeId) == gRecipeBridgeId.length();
+  ok = recipesSaveJson(prefs) && ok;
   prefs.end();
+  return ok;
+}
+
+// The rev goes last, only once everything it describes is stored: a failed write or a reset
+// in between leaves the old rev, so the console sends the config again instead of answering
+// "up to date" to recipes or pages we never stored.
+inline bool recipesSaveRev() {
+  Preferences prefs;
+  if (!prefs.begin("recipes", false)) {
+    return false;
+  }
+  const bool ok = prefs.putUInt("rev", gRecipeRev) > 0;
+  prefs.end();
+  return ok;
+}
+
+inline bool recipesSave() {
+  return recipesSaveData() && recipesSaveRev();
 }
 
 inline void recipesClear() {
