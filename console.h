@@ -12,8 +12,9 @@
 #include "hue_job.h"
 #include "snapshot.h"
 
+// The version lives only in hue-round-switch.ino, defined before this header is included.
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.30"
+#error "FIRMWARE_VERSION must be defined in hue-round-switch.ino"
 #endif
 
 static const unsigned long kPollEmptyMs = 60UL * 1000UL;
