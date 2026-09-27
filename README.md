@@ -37,3 +37,16 @@ A push to `main` **is a release**. `.github/workflows/firmware.yml` builds the p
 - [`THIRD_PARTY.json`](THIRD_PARTY.json) credits the core, ESP-IDF and every library linked into the image; the console shows it on `/credits`. CI fails if the core or any library pinned in `sketch.yaml` is missing from it or has a different version. Update it in the same commit as any core or library bump.
 - Image layout and offsets: [`docs/firmware-artifacts.md`](docs/firmware-artifacts.md).
 - The pipeline needs the `FIRMWARE_UPLOAD_TOKEN` secret in this repo. Setup, rotation and troubleshooting: the console repo's `README.md`, "Firmware release pipeline".
+
+## License
+
+Copyright (c) 2026 Tomas Neira and contributors. [MIT](LICENSE).
+
+The image also links open-source components under their own licenses, listed in
+[`THIRD_PARTY.json`](THIRD_PARTY.json). The Arduino-ESP32 core is LGPL-2.1-or-later:
+because this firmware's source is public, you can rebuild it against a modified core.
+
+The console this firmware talks to, [`hue-switch-console`](https://github.com/tineira/hue-switch-console),
+is AGPL-3.0; it also holds the device contract (`docs/device-api.md`).
+
+Not affiliated with or endorsed by Signify. Philips Hue is a trademark of Signify.
