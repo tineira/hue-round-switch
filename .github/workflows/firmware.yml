@@ -162,16 +162,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view usb-installer >/dev/null 2>&1; then
-            gh release delete usb-installer --yes --cleanup-tag 2>/dev/null \
-              || gh release delete usb-installer --yes
-          fi
-          git push origin --delete usb-installer 2>/dev/null || true
-          gh release create usb-installer \
-            --title "USB installer ${VERSION}" \
-            --notes "Round Display product bins (${VERSION}). Four parts for hue.tineira.com; see docs/firmware-artifacts.md." \
-            --target "${GITHUB_SHA}" \
-            dist/installer/bootloader.bin \
-            dist/installer/partitions.bin \
-            dist/installer/boot_app0.bin \
+          TAG=usb-installer
+          TITLE="USB installer ${VERSION}"
+          NOTES="Round Display product bins (${VERSION}). Four parts for hue.tineira.com; see docs/firmware-artifacts.md."
+          FILES=(
+            dist/installer/bootloader.bin
+            dist/installer/partitions.bin
+            dist/installer/boot_app0.bin
             dist/installer/firmware.bin
+          )
+          # Update in place. Deleting and re-creating the release let two quick
+          # pushes race: one run deleted the release the other was uploading to.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES" --target "${GITHUB_SHA}"
+          fi

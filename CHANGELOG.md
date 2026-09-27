@@ -2,6 +2,11 @@
 
 User-facing release notes for the Round switch. One `### <version> — <date>` heading per `FIRMWARE_VERSION`, written in the same commit that bumps `FIRMWARE_VERSION`, in the wording of the person using the switch. CI sends the entry for the built version to the console with the upload.
 
+### 0.5.32 — 2026-09-27
+
+- During setup, the list of Wi-Fi networks can now include hidden networks that answer with their name, as on the Simple switch.
+- If the screen reports a touch that never ends (the same point, unmoving, for a full minute), the switch now lets it go. Before, it could stop picking up changes from the console until it was restarted. A finger held still on the circle for that long does not count as a tap.
+
 ### 0.5.31 — 2026-09-27
 
 - If the switch loses power or runs out of storage while saving new pages or gestures from the console, it now gets them again on its next check-in. Before, it could keep its old ones while the console showed it as up to date.

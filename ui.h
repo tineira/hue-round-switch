@@ -43,6 +43,12 @@ static const unsigned long kDoubleTapMs = 400;
 // point. A fast double tap is then two touches, not one long press.
 static const unsigned long kTouchLiftMs = 30;
 static const unsigned long kTouchRearmMs = 15;
+// A touch that stays down with no movement this long is taken as a stuck report (INT
+// held low, the chip repeating its last point), not a finger. No gesture here needs a
+// still finger for more than a few seconds: tap and double tap fire on lift, a swipe
+// moves, and the ring commits its level on lift. While a touch is down the console
+// poll, the idle timeout and Hue state reads wait, so a stuck touch must end.
+static const unsigned long kTouchStuckMs = 60000;
 static const int16_t kSwipeMinPx = 40;
 static const uint16_t kColYellow = 0xFFE0;
 static const int16_t kTokenMarkY = 229;  // In the ring's gap at 6 o'clock
@@ -82,6 +88,8 @@ inline unsigned long gRefreshAtMs = 0;
 inline unsigned long gTouchLastPtMs = 0;
 inline unsigned long gTouchIrqLowMs = 0;
 inline unsigned long gTouchIgnoreUntil = 0;
+inline unsigned long gTouchStillSinceMs = 0;  // Last touch start or movement
+inline bool gTouchStuck = false;  // Ended by kTouchStuckMs; ignore touch until INT goes high
 inline int16_t gTouchX = -1;
 inline int16_t gTouchY = -1;
 inline int16_t gTouchStartX = -1;
@@ -1048,10 +1056,32 @@ inline void uiTouchEnd(unsigned long now) {
   }
 }
 
+// End a touch that has been still for kTouchStuckMs. Nothing fires for the circle (a
+// minute-long press is not a tap, and the pending first tap of a double tap is
+// dropped); the ring keeps the level under the finger, as on a lift.
+inline void uiTouchEndStuck(unsigned long now) {
+  LOG("touch stuck %lums, released\n", now - gTouchStillSinceMs);
+  if (gTouchMode == TOUCH_CENTER) {
+    gTouchMode = TOUCH_IDLE;
+  }
+  gSecondTap = false;
+  gTapWaitDouble = false;
+  uiTouchEnd(now);
+  gTouchStuck = true;
+}
+
 inline void uiPollTouch(unsigned long now) {
   const bool irq = touchIrqPressed();
   if (irq) {
     gTouchIrqLowMs = now;
+  }
+  if (gTouchStuck) {
+    // After a stuck touch, only a real lift (INT high) re-arms the glass. Otherwise
+    // the same stuck report would start a new touch, or wake the idle screen, at once.
+    if (irq) {
+      return;
+    }
+    gTouchStuck = false;
   }
   int16_t x = 0, y = 0;
   bool hasPt = false;
@@ -1068,6 +1098,7 @@ inline void uiPollTouch(unsigned long now) {
     gTouchDown = true;
     gIdleWakeHold = true;
     gTouchLastPtMs = now;
+    gTouchStillSinceMs = now;
     gTouchX = hasPt ? x : -1;
     gTouchY = hasPt ? y : -1;
     gTouchStartX = gTouchX;
@@ -1091,6 +1122,10 @@ inline void uiPollTouch(unsigned long now) {
       uiTouchEnd(now);
       return;
     }
+    if (!moved && (now - gTouchStillSinceMs) >= kTouchStuckMs) {
+      uiTouchEndStuck(now);
+      return;
+    }
   }
 
   if (!gTouchDown) {
@@ -1111,6 +1146,7 @@ inline void uiPollTouch(unsigned long now) {
     }
     gTouchDown = true;
     gTouchLastPtMs = now;
+    gTouchStillSinceMs = now;
     gTouchX = x;
     gTouchY = y;
     gTouchStartX = x;
@@ -1143,6 +1179,7 @@ inline void uiPollTouch(unsigned long now) {
 
   if (moved) {
     gTouchLastPtMs = now;
+    gTouchStillSinceMs = now;
     gTouchX = x;
     gTouchY = y;
     if (gDimDragging) {

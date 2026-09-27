@@ -157,7 +157,7 @@ inline void improvKickScan() {
   WiFi.setSleep(false);
   WiFi.disconnect(false, false);
   WiFi.scanDelete();
-  WiFi.scanNetworks(true);
+  WiFi.scanNetworks(true, true);  // async, include hidden networks (same as Simple)
   gImprovScanKickAt = millis();
 }
 
@@ -191,10 +191,15 @@ inline void improvFlushScan() {
   gImprovScanDefer = false;
   if (n > 0) {
     for (int16_t i = 0; i < n; i++) {
-      char rssi[8];
-      snprintf(rssi, sizeof(rssi), "%d", WiFi.RSSI(i));
       char ssid[33];
       strlcpy(ssid, WiFi.SSID(i).c_str(), sizeof(ssid));
+      // A hidden network that did not give its name has an empty SSID: there is
+      // nothing to list (the name is typed by hand in setup), same as Simple.
+      if (!ssid[0]) {
+        continue;
+      }
+      char rssi[8];
+      snprintf(rssi, sizeof(rssi), "%d", WiFi.RSSI(i));
       const char *auth = WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "NO" : "YES";
       const char *strs[3] = {ssid, rssi, auth};
       improvSendRpcStrings(IMPROV_CMD_SCAN, strs, 3);
