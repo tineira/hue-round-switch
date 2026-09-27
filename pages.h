@@ -557,13 +557,18 @@ inline bool pagesParseArray(const char *json, uint8_t *countOut) {
   return true;
 }
 
-inline void pagesSave() {
+// false if NVS did not take the pages, axis, timeout or bridge id (cursors are best effort).
+inline bool pagesSave() {
   Preferences prefs;
-  prefs.begin("pages", false);
-  prefs.putString("json", pagesToJson());
-  prefs.putString("axis", gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal");
-  prefs.putUShort("sto", gScreenTimeoutSec);
-  prefs.putString("bid", gPageBridgeId);
+  if (!prefs.begin("pages", false)) {
+    return false;
+  }
+  const String json = pagesToJson();
+  const char *axis = gPageSwipeAxis == PAGE_SWIPE_VERTICAL ? "vertical" : "horizontal";
+  bool ok = prefs.putString("json", json) == json.length();
+  ok = prefs.putString("axis", axis) == strlen(axis) && ok;
+  ok = prefs.putUShort("sto", gScreenTimeoutSec) > 0 && ok;
+  ok = prefs.putString("bid", gPageBridgeId) == gPageBridgeId.length() && ok;
   prefs.putUChar("idx", gPageIndex);
   for (uint8_t i = 0; i < kMaxPages; i++) {
     char key[4] = {'s', static_cast<char>('0' + i), 0, 0};
@@ -571,6 +576,7 @@ inline void pagesSave() {
   }
   prefs.end();
   pagesMarkSaved();
+  return ok;
 }
 
 inline void pagesClear() {

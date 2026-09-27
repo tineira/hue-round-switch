@@ -413,12 +413,16 @@ inline void consoleApplyConfig(const char *body) {
     return;
   }
   gRecipeRev = rev;
-  recipesSave();
-  pagesSave();
+  // Recipes and pages first, the rev only after both (recipesSaveRev).
+  const bool saved = recipesSaveData() && pagesSave() && recipesSaveRev();
   gNeedHueState = true;
   gNeedFullPaint = true;
-  // Poll once more right away so the console sees the new rev (answered with 204).
-  gConsoleConfirmPoll = true;
+  // Poll once more right away so the console sees the new rev (answered with 204). After a
+  // failed write NVS keeps the old rev, so the next poll brings this config again.
+  gConsoleConfirmPoll = saved;
+  if (!saved) {
+    LOGLN("console config NVS write failed — rev not stored");
+  }
   LOG("console rev %u — replaced %u pages %u recipes\n", gRecipeRev, gPageCount, gRecipeCount);
 }
 
