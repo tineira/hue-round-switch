@@ -2,6 +2,8 @@
 
 User-facing release notes for the Round switch. One `### <version> — <date>` heading per `FIRMWARE_VERSION`, written in the same commit that bumps `FIRMWARE_VERSION`, in the wording of the person using the switch. CI sends the entry for the built version to the console with the upload.
 
+Start a bullet with `Important: ` when the person must know or do something before or right after updating (a button to press, a setting to redo). The console shows those first, with an Important label, when Setup offers the update. Do not use it for new features.
+
 ### 0.5.32 — 2026-09-27
 
 - During setup, the list of Wi-Fi networks can now include hidden networks that answer with their name, as on the Simple switch.
