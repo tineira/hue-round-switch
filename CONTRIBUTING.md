@@ -5,6 +5,8 @@ Thanks for helping. This is the firmware for the **Round** switch (XIAO ESP32-S3
 - [`hue-switch-console`](https://github.com/tineira/hue-switch-console) is the hub. It owns the contract every switch implements, and its [CONTRIBUTING.md](https://github.com/tineira/hue-switch-console/blob/main/CONTRIBUTING.md) has the project-wide rules.
 - [`hue-simple-switch`](https://github.com/tineira/hue-simple-switch) is the other switch. It shares the contract with this one, not the code.
 
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report problems to [conduct@tineira.com](mailto:conduct@tineira.com).
+
 ## Ground rules
 
 - **English everywhere:** code comments, docs, commit messages, issues.
@@ -39,4 +41,4 @@ Hardware: Seeed XIAO ESP32-S3 with the Seeed Round Display for XIAO (v1.1: the b
 
 ## License
 
-By contributing, you agree that your contribution is licensed under this repo's license, [MIT](LICENSE).
+There is no CLA and no sign-off. By contributing, you agree that your contribution is licensed under this repo's license, [MIT](LICENSE).
