@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.5.32"
+#define FIRMWARE_VERSION "0.6.0"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -20,10 +20,16 @@ String gHueAppKey;
 #include "console.h"
 #include "usb_setup.h"
 
+// The core would confirm a freshly updated image at startup; this firmware confirms it after
+// its first successful console poll instead (ota.h), so a new image that cannot get that far
+// goes back to the previous one on the next restart.
+extern "C" bool verifyRollbackLater() { return true; }
+
 // Ownership (see docs/specs/stability.md §4.9):
 // - loop (core 1): UI, gestures, pages / recipes in RAM and their NVS.
 // - hueJob task: the Bridge connection, the link state, Bridge IP / key / id.
 // - consoleJob task: the Vercel connection; the config body reaches the loop via a queue.
+//   Updates over Wi-Fi download there too; the loop only paints their screen (ota.h).
 
 static const unsigned long kWifiConnectingMs = 15000;  // "Wi-Fi..." before "No Wi-Fi" at boot
 static const unsigned long kWifiRetryMs = 30000;       // Let auto-reconnect work first
@@ -76,6 +82,7 @@ void setup() {
   LOG("firmware %s\n", FIRMWARE_VERSION);
 
   consoleLoadNvs();
+  otaBootCheck();
   recipesLoad();
   pagesLoad();
   hueLoadStore();
@@ -178,6 +185,9 @@ static void hueBindTick() {
 
 // One place picks the screen. Tasks only publish state.
 static void applyScreen(unsigned long now) {
+  if (gUi == UI_UPDATING) {
+    return;  // ota.h leaves it, after a failure; success restarts
+  }
   UiScreen want = gUi;
   if (gConsoleAuthRejected && gRecipeCount == 0) {
     // Nothing to run locally: the token is the problem to show.
@@ -234,7 +244,9 @@ void loop() {
   bootPoll(now);
   if (gBootPairWant) {
     gBootPairWant = false;
-    huePairRequest();
+    if (gUi != UI_UPDATING) {
+      huePairRequest();
+    }
   }
   wifiTick(now);
   hueBindTick();
@@ -244,6 +256,7 @@ void loop() {
     consoleApplyConfigIfReady();
   }
   pagesFlushLazy(false);
+  otaLoopTick(now);
   applyScreen(now);
   tokenMarkTick();
   if (gUi == UI_READY || gUi == UI_EMPTY) {

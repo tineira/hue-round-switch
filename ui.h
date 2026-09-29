@@ -22,6 +22,7 @@ enum UiScreen {
   UI_BUSY,
   UI_ERROR,
   UI_TOKEN,
+  UI_UPDATING,  // Update over Wi-Fi (ota.h); touches wait for the restart
 };
 
 enum TouchMode { TOUCH_IDLE = 0, TOUCH_CENTER, TOUCH_RING };
@@ -266,6 +267,7 @@ inline void uiDrawLevel() {
 }
 
 inline void uiPaint();
+inline void otaPaintScreen();  // ota.h
 
 inline void uiIdleEnter() {
   if (gScreenIdle) {
@@ -300,7 +302,8 @@ inline void uiSet(UiScreen s) {
   if (s == UI_ERROR) {
     gUiErrorUntilMs = millis() + 2000;
   }
-  if (gScreenIdle && s != UI_READY && s != UI_EMPTY) {
+  // The Updating screen starts asleep when the screen was (ota-round spec §4.2).
+  if (gScreenIdle && s != UI_READY && s != UI_EMPTY && s != UI_UPDATING) {
     displayWakePanel();
     gScreenIdle = false;
     gIdleWakeHold = false;
@@ -445,7 +448,7 @@ inline void uiDrawReadyFace() {
 }
 
 inline void uiPaint() {
-  if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+  if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY || gUi == UI_UPDATING)) {
     return;
   }
   if (!gDisplayOk || !gLcd) {
@@ -457,6 +460,12 @@ inline void uiPaint() {
   const PageTheme *t = uiTheme();
   gLcd->fillScreen(t->bg);
 
+  if (gUi == UI_UPDATING) {
+    otaPaintScreen();
+    gUiPainted = gUi;
+    gUiPulseMs = now;
+    return;
+  }
   if (gUi == UI_READY || gUi == UI_EMPTY) {
     uiDrawReadyFace();
   } else {
@@ -498,6 +507,8 @@ inline void uiPaint() {
       break;
     case UI_TOKEN:
       line = "Token rejected";
+      break;
+    case UI_UPDATING:
       break;
   }
   if (gUi == UI_BOOT) {
@@ -870,7 +881,7 @@ inline void uiTick(unsigned long now) {
     }
   }
   if (gUi != gUiPainted) {
-    if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY)) {
+    if (gScreenIdle && (gUi == UI_READY || gUi == UI_EMPTY || gUi == UI_UPDATING)) {
       displayBl(false);
       return;
     }
