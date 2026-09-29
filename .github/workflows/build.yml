@@ -29,3 +29,7 @@ jobs:
 
       - name: Compile
         run: arduino-cli compile --profile xiao-s3 .
+
+      # The JSON helpers and config-poll parsers, built with g++ on the runner (no board).
+      - name: Host tests
+        run: bash tests/host/run.sh

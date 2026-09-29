@@ -62,6 +62,8 @@ arduino-cli upload  --profile xiao-s3 -p COMx .
 arduino-cli monitor -p COMx -c baudrate=115200
 ```
 
+Host tests: `bash tests/host/run.sh` (g++, no board) builds `tests/host/test_json.cpp` against `json_util.h`, `pages.h` and `recipes.h`, with minimal Arduino stubs in `tests/host/stubs/` (`String`, `Stream`, an in-memory `Preferences`). `build.yml` runs it inside the `compile` job. Extend the stubs only as far as a header under test needs; do not include hardware headers there.
+
 Replace `COMx` with the XIAO port (`arduino-cli board list`, typically COM4 on HWCDC). First flash on a new S3 may need BOOT held while plugging USB. After HWCDC is on the chip, later uploads use DTR on that same COM — no BOOT.
 
 Releases: a push to `main` runs `.github/workflows/firmware.yml`. It builds with `SERIAL_DEBUG` 0 and uploads the four installer parts to the console (`POST https://hue.tineira.com/api/firmware/round`, secret `FIRMWARE_UPLOAD_TOKEN`) with this version's `CHANGELOG.md` entry as the notes; the console serves `/install` and `/changelog` from that upload. A failed upload (missing token or notes, any error) fails the run. Same bins and version again: no change. Different bins under the same version (`409 version_exists`, e.g. a docs-only push): a warning, the notes are updated but the bins are not, so bump `FIRMWARE_VERSION` to ship new bins. The run also refreshes the `usb-installer` GitHub release as a download link.

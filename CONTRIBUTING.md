@@ -26,6 +26,8 @@ arduino-cli upload --profile xiao-s3 -p <port> .
 
 Provision the board once from the console's **Setup** page in Chrome or Edge. `arduino-cli upload` doesn't erase NVS, so Wi-Fi and the token survive later flashes. Set `SERIAL_DEBUG` to `1` in `config.h` for USB logs.
 
+Host tests: `bash tests/host/run.sh` builds the JSON helpers and the config-poll parsers with `g++` on your computer (no board; Linux or macOS, stub Arduino types in `tests/host/stubs/`) and runs them. The pull request check runs them too. Add a case there when you change a parser.
+
 Hardware: Seeed XIAO ESP32-S3 with the Seeed Round Display for XIAO (v1.1: the backlight switch must be ON).
 
 ## Pull requests
@@ -34,7 +36,7 @@ Hardware: Seeed XIAO ESP32-S3 with the Seeed Round Display for XIAO (v1.1: the b
 
 1. For anything bigger than a small fix, open or comment on an issue first.
 2. Keep a PR to one change, and match the style of the surrounding code.
-3. It must compile with `arduino-cli compile --profile xiao-s3 .`.
+3. It must compile with `arduino-cli compile --profile xiao-s3 .`, and `bash tests/host/run.sh` must pass.
 4. Leave `FIRMWARE_VERSION` (in `hue-round-switch.ino`) and `CHANGELOG.md` alone: the maintainer bumps them when releasing. Describe the user-visible change in the PR instead.
 5. If you add or upgrade the core or a library, update `sketch.yaml` and [`THIRD_PARTY.json`](THIRD_PARTY.json) in the same PR (`python3 scripts/check-credits.py` checks it, and the PR check runs it too). Every component must have an MIT-compatible license.
 6. Say which board you tested on and what you checked.
