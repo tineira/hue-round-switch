@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Credits match sketch.yaml
+        run: python3 scripts/check-credits.py
+
       - uses: arduino/setup-arduino-cli@v2
 
       - name: Product config.h (no USB logs)
@@ -70,52 +73,6 @@ jobs:
             echo "::error::FIRMWARE_UPLOAD_TOKEN missing; cannot upload the release to the console."
             exit 1
           fi
-          # Credits: every core and library pinned in sketch.yaml must be listed in
-          # THIRD_PARTY.json with the same version, so a bump cannot leave stale credits.
-          python3 - <<'PY'
-          import json, re, sys
-          try:
-              with open("THIRD_PARTY.json", encoding="utf-8") as f:
-                  credits = json.load(f)
-          except (OSError, ValueError) as e:
-              print(f"::error::THIRD_PARTY.json is not valid JSON: {e}")
-              sys.exit(1)
-          if not isinstance(credits, list) or not all(isinstance(c, dict) for c in credits):
-              print("::error::THIRD_PARTY.json must be a JSON array of objects.")
-              sys.exit(1)
-          listed = {c.get("name"): c.get("version") for c in credits}
-          pins, section = [], None
-          with open("sketch.yaml", encoding="utf-8") as f:
-              for line in f:
-                  s = line.split("#", 1)[0].rstrip()
-                  item = re.match(r"^\s*-\s*(?:platform:\s*)?(.+?)\s*\(([^)]+)\)$", s)
-                  key = re.match(r"^\s*([\w-]+):", s)
-                  if item and section:
-                      entry = f"{item.group(1)} ({item.group(2)})"
-                      name = item.group(1)
-                      if section == "platforms":
-                          if name != "esp32:esp32":
-                              print(f"::error::sketch.yaml platform '{entry}' has no THIRD_PARTY.json mapping.")
-                              sys.exit(1)
-                          name = "Arduino-ESP32 core"
-                      pins.append((name, item.group(2), entry))
-                  elif key and key.group(1) != "platform_index_url":
-                      section = key.group(1) if key.group(1) in ("platforms", "libraries") else None
-          if not pins:
-              print("::error::No platforms or libraries found in sketch.yaml.")
-              sys.exit(1)
-          bad = False
-          for name, version, entry in pins:
-              if name not in listed:
-                  print(f"::error::sketch.yaml pins '{entry}' but THIRD_PARTY.json has no entry named '{name}'.")
-                  bad = True
-              elif listed[name] != version:
-                  print(f"::error::sketch.yaml pins '{entry}' but THIRD_PARTY.json lists '{name}' at version '{listed[name]}'.")
-                  bad = True
-          if bad:
-              sys.exit(1)
-          print("THIRD_PARTY.json covers sketch.yaml: " + ", ".join(e for _, _, e in pins))
-          PY
           # Notes: the CHANGELOG.md section whose ### heading starts with VERSION,
           # up to the next ### or ## heading, HTML comments removed, blank edges trimmed.
           awk -v v="$VERSION" '

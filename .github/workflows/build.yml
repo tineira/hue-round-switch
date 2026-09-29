@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Credits match sketch.yaml
+        run: python3 scripts/check-credits.py
+
       - uses: arduino/setup-arduino-cli@v2
 
       - name: Product config.h (no USB logs)
