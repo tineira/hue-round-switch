@@ -4,6 +4,10 @@ User-facing release notes for the Round switch. One `### <version> — <date>` h
 
 Start a bullet with `Important: ` when the person must know or do something before or right after updating (a button to press, a setting to redo). The console shows those first, with an Important label, when Setup offers the update. Do not use it for new features.
 
+### 0.6.3 — 2026-09-29
+
+- After a restart, the switch sends its lights, rooms and scenes to the console once instead of twice, so it asks less of the Hue Bridge while starting up.
+
 ### 0.6.2 — 2026-09-28
 
 - An update from Switches no longer stops with "not enough memory" when it starts soon after the switch restarted.

@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.6.2"
+#define FIRMWARE_VERSION "0.6.3"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -39,7 +39,6 @@ static bool gWifiWasUp = false;
 static bool gWifiEverUp = false;
 static unsigned long gWifiBeginMs = 0;
 static unsigned long gWifiDownMs = 0;
-static bool gConsoleBooted = false;
 static String gBoundBridgeId;
 static bool gTokenMarkShown = false;
 

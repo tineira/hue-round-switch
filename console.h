@@ -31,6 +31,11 @@ inline bool gConsoleRegistered = false;
 inline unsigned long gConsoleLastPollMs = 0;
 inline unsigned long gConsoleLastRegisterMs = 0;
 inline bool gConsolePolledBoot = false;
+// Loop-owned: hueBindTick bound the Bridge for the first time and ran consoleBootSync. Until
+// then polls fetch config only: the register needs the Bridge, and the boot sync sends it.
+// Without this, the first poll (Wi-Fi up, link still starting) queued a register that waited
+// for the snapshot, and the boot sync queued a second one behind it.
+inline bool gConsoleBooted = false;
 // Written by the console task after each config poll: seconds until the next poll, 0 = the
 // console did not say (older console), use kPollEmptyMs / kPollArmedMs.
 inline std::atomic<uint32_t> gConsolePollSec{0};
@@ -531,6 +536,7 @@ inline void consolePollTick(unsigned long now) {
   if (!due) {
     return;
   }
+  doRegister = doRegister && gConsoleBooted;
   gConsoleConfirmPoll = false;
   gConsoleLastPollMs = now;
   gConsolePolledBoot = true;
