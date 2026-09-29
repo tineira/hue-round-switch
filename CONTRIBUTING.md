@@ -36,7 +36,7 @@ Hardware: Seeed XIAO ESP32-S3 with the Seeed Round Display for XIAO (v1.1: the b
 2. Keep a PR to one change, and match the style of the surrounding code.
 3. It must compile with `arduino-cli compile --profile xiao-s3 .`.
 4. Leave `FIRMWARE_VERSION` (in `hue-round-switch.ino`) and `CHANGELOG.md` alone: the maintainer bumps them when releasing. Describe the user-visible change in the PR instead.
-5. If you add or upgrade the core or a library, update `sketch.yaml` and [`THIRD_PARTY.json`](THIRD_PARTY.json) in the same PR. Every component must have an MIT-compatible license.
+5. If you add or upgrade the core or a library, update `sketch.yaml` and [`THIRD_PARTY.json`](THIRD_PARTY.json) in the same PR (`python3 scripts/check-credits.py` checks it, and the PR check runs it too). Every component must have an MIT-compatible license.
 6. Say which board you tested on and what you checked.
 
 ## License
