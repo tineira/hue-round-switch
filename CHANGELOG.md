@@ -4,6 +4,10 @@ User-facing release notes for the Round switch. One `### <version> — <date>` h
 
 Start a bullet with `Important: ` when the person must know or do something before or right after updating (a button to press, a setting to redo). The console shows those first, with an Important label, when Setup offers the update. Do not use it for new features.
 
+### 0.6.1 — 2026-09-28
+
+- An update from Switches is less likely to fail when the Wi-Fi signal drops for a moment during the download.
+
 ### 0.6.0 — 2026-09-28
 
 - Later versions can be installed from Switches in the console, without a USB cable. Press Update now, and at its next check-in, once nobody has touched it for a few seconds, the switch shows Updating with the ring filling up, then restarts on the new version. Your pages, Wi-Fi and Hue pairing stay as they are.

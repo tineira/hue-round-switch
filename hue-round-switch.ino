@@ -2,7 +2,7 @@
 #include "config.h"
 #include "log.h"
 
-#define FIRMWARE_VERSION "0.6.0"
+#define FIRMWARE_VERSION "0.6.1"
 
 SET_LOOP_TASK_STACK_SIZE(24576);
 
@@ -146,6 +146,11 @@ static void wifiTick(unsigned long now) {
     gWifiDownMs = now;
     digitalWrite(LED_BUILTIN, LOW);
     LOGLN("WiFi down");
+  }
+  // During an update the STA reconnects by itself; a disconnect here would cut off a download
+  // that could still recover (ota.h ends it after its own stall timeout).
+  if (gUi == UI_UPDATING) {
+    return;
   }
   if (!gWifiStaForgotten && !usbWifiBusy() && now - gWifiBeginMs >= kWifiRetryMs && wifiHasArduinoCreds()) {
     LOGLN("WiFi retry");
