@@ -45,9 +45,12 @@ struct OtaOffer {
 
 // Retry a failed offer at most this often; size and sha block that version until reboot.
 static const unsigned long kOtaRetryMs = 60UL * 60UL * 1000UL;
-// Largest free internal block needed to start: one TLS session (mbedtls allocates internal RAM)
-// plus the 4 KB write buffer, with room.
-static const size_t kOtaMinBlock = 48 * 1024;
+// Internal RAM needed to start (mbedtls allocates internal RAM on this core). Measured in the
+// Downgrade test (ota-round spec §7): the TLS session plus the 4 KB write buffer took ~57 KB in
+// all, its largest piece ~17 KB. Right after a restart the free RAM is fragmented (134 KB free,
+// largest block 47 KB), so the check is on both, with room, not on one large block.
+static const size_t kOtaMinFree = 80 * 1024;
+static const size_t kOtaMinBlock = 24 * 1024;
 static const unsigned long kOtaStallMs = 20000;
 // The screen must have been left alone this long before an update starts.
 static const unsigned long kOtaQuietMs = 10000;
@@ -330,7 +333,7 @@ inline bool otaDownload(const OtaOffer &o) {
   }
   OtaHeapLow low{SIZE_MAX, SIZE_MAX, SIZE_MAX};
   otaHeapSample(&low, "start");
-  if (low.blockInt < kOtaMinBlock) {
+  if (low.freeInt < kOtaMinFree || low.blockInt < kOtaMinBlock) {
     otaFail(o.version, "heap", false);
     return false;
   }
