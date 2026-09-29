@@ -64,15 +64,26 @@ jobs:
             dist/installer/firmware.bin
           if-no-files-found: error
 
+      # Upload origin: the CONSOLE_UPLOAD_URL repository variable, else the hosted
+      # console. A fork sets both the variable and the FIRMWARE_UPLOAD_TOKEN secret
+      # to upload to its own console (README, "Building from a fork").
       - name: Upload to console
         env:
           FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
+          CONSOLE_UPLOAD_URL: ${{ vars.CONSOLE_UPLOAD_URL || 'https://hue.tineira.com' }}
+          UPSTREAM: ${{ github.repository == 'tineira/hue-round-switch' }}
         run: |
           set -euo pipefail
           if [ -z "${FIRMWARE_UPLOAD_TOKEN:-}" ]; then
+            if [ "$UPSTREAM" != "true" ]; then
+              echo "::notice::FIRMWARE_UPLOAD_TOKEN not set; skipping the console upload. Set it and the CONSOLE_UPLOAD_URL variable to upload to your own console."
+              exit 0
+            fi
             echo "::error::FIRMWARE_UPLOAD_TOKEN missing; cannot upload the release to the console."
             exit 1
           fi
+          CONSOLE_UPLOAD_URL="${CONSOLE_UPLOAD_URL%/}"
+          echo "Console: ${CONSOLE_UPLOAD_URL}"
           # Notes: the CHANGELOG.md section whose ### heading starts with VERSION,
           # up to the next ### or ## heading, HTML comments removed, blank edges trimmed.
           awk -v v="$VERSION" '
@@ -88,7 +99,7 @@ jobs:
           fi
           echo "Notes for ${VERSION}:"
           cat notes.md
-          if ! code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://hue.tineira.com/api/firmware/round" \
+          if ! code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "${CONSOLE_UPLOAD_URL}/api/firmware/round" \
             -H "Authorization: Bearer $FIRMWARE_UPLOAD_TOKEN" \
             -F "version=$VERSION" \
             -F "commit=$GITHUB_SHA" \
