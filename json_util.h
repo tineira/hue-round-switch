@@ -212,7 +212,9 @@ inline bool jsonHueSceneActive(const char *json, bool *active) {
   return true;
 }
 
-// 5×7 font: ñ→n, accents dropped. The circle does not paint UTF-8.
+// 5×7 font: letters with accents fold to their base letter (ñ→n, Ł→L); other non-ASCII is
+// dropped. The circle does not paint UTF-8. Covers Latin-1 (lead byte 0xC3) and Latin
+// Extended-A (U+0100–U+017F, lead bytes 0xC4 and 0xC5).
 inline void asciiFold(char *dst, size_t dstSz, const char *src) {
   if (!dst || dstSz == 0) {
     return;
@@ -226,6 +228,17 @@ inline void asciiFold(char *dst, size_t dstSz, const char *src) {
       'D', 'N', 'O', 'O', 'O', 'O', 'O', 'x', 'O', 'U', 'U', 'U', 'U', 'Y', 'T', 's',
       'a', 'a', 'a', 'a', 'a', 'a', 'a', 'c', 'e', 'e', 'e', 'e', 'i', 'i', 'i', 'i',
       'd', 'n', 'o', 'o', 'o', 'o', 'o', 'x', 'o', 'u', 'u', 'u', 'u', 'y', 't', 'y'};
+  // U+0100–U+017F. Letters without a decomposition take the closest base letter
+  // (Đ→D, Ħ→H, ı→i, Ł→L, Ŋ→N, Ŧ→T, ſ→s; the ligatures Ĳ and Œ keep their first letter).
+  static const char kC4C5[128] = {
+      'A', 'a', 'A', 'a', 'A', 'a', 'C', 'c', 'C', 'c', 'C', 'c', 'C', 'c', 'D', 'd',
+      'D', 'd', 'E', 'e', 'E', 'e', 'E', 'e', 'E', 'e', 'E', 'e', 'G', 'g', 'G', 'g',
+      'G', 'g', 'G', 'g', 'H', 'h', 'H', 'h', 'I', 'i', 'I', 'i', 'I', 'i', 'I', 'i',
+      'I', 'i', 'I', 'i', 'J', 'j', 'K', 'k', 'k', 'L', 'l', 'L', 'l', 'L', 'l', 'L',
+      'l', 'L', 'l', 'N', 'n', 'N', 'n', 'N', 'n', 'n', 'N', 'n', 'O', 'o', 'O', 'o',
+      'O', 'o', 'O', 'o', 'R', 'r', 'R', 'r', 'R', 'r', 'S', 's', 'S', 's', 'S', 's',
+      'S', 's', 'T', 't', 'T', 't', 'T', 't', 'U', 'u', 'U', 'u', 'U', 'u', 'U', 'u',
+      'U', 'u', 'U', 'u', 'W', 'w', 'Y', 'y', 'Y', 'Z', 'z', 'Z', 'z', 'Z', 'z', 's'};
   size_t o = 0;
   const uint8_t *p = reinterpret_cast<const uint8_t *>(src);
   while (*p && o + 1 < dstSz) {
@@ -238,8 +251,12 @@ inline void asciiFold(char *dst, size_t dstSz, const char *src) {
     }
     if ((c & 0xE0) == 0xC0 && *p) {
       const uint8_t c2 = *p++;
-      if (c == 0xC3 && c2 >= 0x80) {
-        dst[o++] = kC3[c2 - 0x80];
+      if (c2 >= 0x80 && c2 < 0xC0) {
+        if (c == 0xC3) {
+          dst[o++] = kC3[c2 - 0x80];
+        } else if (c == 0xC4 || c == 0xC5) {
+          dst[o++] = kC4C5[(c - 0xC4) * 64 + (c2 - 0x80)];
+        }
       }
       continue;
     }
