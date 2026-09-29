@@ -212,6 +212,70 @@ static void testSinkOversizedObjectDropped() {
   }
 }
 
+// A Clip v2 scene whose actions[] alone is bigger than the buffer (issue #14).
+static std::string bigScene(const char *id, const char *actionsSep) {
+  std::string s = "{\"id\":\"";
+  s += id;
+  s += "\",\"type\":\"scene\",\"actions\"";
+  s += actionsSep;
+  s += "[";
+  for (int i = 0; i < 200; i++) {
+    if (i) {
+      s += ",";
+    }
+    s += "{\"target\":{\"rid\":\"00000000-0000-0000-0000-" + std::to_string(100000000000LL + i) +
+         "\",\"rtype\":\"light\"},\"action\":{\"on\":{\"on\":true},\"dimming\":{\"brightness\":80.0},"
+         "\"color\":{\"xy\":{\"x\":0.4573,\"y\":0.41}},\"note\":\"}]{[\\\"\"}}";
+  }
+  s += "],\"metadata\":{\"name\":\"Big party\"},\"group\":{\"rid\":\"room-1\",\"rtype\":\"room\"},"
+       "\"status\":{\"active\":\"inactive\"}}";
+  return s;
+}
+
+static void testSinkSkipsSceneActions() {
+  const std::string big = bigScene("s-big", ":");
+  CHECK(big.size() > JsonDataSink::kMaxObj);
+  const std::string spaced = bigScene("s-spaced", " : ");
+  const std::string body = "{\"errors\":[],\"data\":[{\"id\":\"s-small\",\"actions\":[{\"x\":1}]}," + big + "," +
+                           spaced + ",{\"id\":\"s-after\",\"actions\":null,\"n\":1}]}";
+  for (size_t chunk : {size_t(1), size_t(7), size_t(1024)}) {
+    SinkResult r = runSink(body, chunk);
+    CHECK(r.objects == 4);
+    CHECK(!r.overflow);
+    CHECK(r.objs.size() == 4);
+    if (r.objs.size() != 4) {
+      continue;
+    }
+    CHECK_STR(r.objs[0], "{\"id\":\"s-small\",\"actions\":[]}");
+    const std::string tail =
+        "[],\"metadata\":{\"name\":\"Big party\"},\"group\":{\"rid\":\"room-1\",\"rtype\":\"room\"},"
+        "\"status\":{\"active\":\"inactive\"}}";
+    CHECK_STR(r.objs[1], "{\"id\":\"s-big\",\"type\":\"scene\",\"actions\":" + tail);
+    CHECK_STR(r.objs[2], "{\"id\":\"s-spaced\",\"type\":\"scene\",\"actions\" : " + tail);
+    CHECK_STR(r.objs[3], "{\"id\":\"s-after\",\"actions\":[],\"n\":1}");
+
+    // What snapshotOnScene reads is still there.
+    char out[40];
+    CHECK(jsonGetString(r.objs[1].c_str(), "id", out, sizeof(out)));
+    CHECK_STR(out, "s-big");
+    CHECK(jsonGetObjectString(r.objs[1].c_str(), "metadata", "name", out, sizeof(out)));
+    CHECK_STR(out, "Big party");
+    CHECK(jsonGetObjectString(r.objs[1].c_str(), "group", "rid", out, sizeof(out)));
+    CHECK_STR(out, "room-1");
+  }
+}
+
+// Only a top-level "actions" key is skipped: nested ones, and the word in a value, stay.
+static void testSinkKeepsOtherActions() {
+  const std::string obj =
+      "{\"id\":\"b1\",\"configuration\":{\"actions\":[1,2]},\"name\":\"\\\"actions\\\":\",\"x\":\"actions\"}";
+  SinkResult r = runSink("{\"data\":[" + obj + "]}", 1);
+  CHECK(r.objs.size() == 1);
+  if (r.objs.size() == 1) {
+    CHECK_STR(r.objs[0], obj);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // pages.h / recipes.h: the config poll (console docs/device-api.md)
 
@@ -367,6 +431,8 @@ int main() {
   testEachArray();
   testSinkBasic();
   testSinkOversizedObjectDropped();
+  testSinkSkipsSceneActions();
+  testSinkKeepsOtherActions();
   testConfigPoll();
   testConfigPollKeepsActivePage();
   testConfigPollRejects();
