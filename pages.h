@@ -497,59 +497,8 @@ inline bool pagesParseArray(const char *json, uint8_t *countOut) {
     return false;
   }
   jsonEachArrayObject(json, "pages", pagesParseOne, &n);
-  if (n == 0 && json[0] == '[') {
-    const char *p = json;
-    const char *start = nullptr;
-    int depth = 0;
-    bool inString = false;
-    bool escape = false;
-    for (; *p; p++) {
-      const char c = *p;
-      if (depth == 0 && !inString) {
-        if (c == ']') {
-          break;
-        }
-        if (c == '{') {
-          depth = 1;
-          start = p;
-          inString = false;
-          escape = false;
-        }
-        continue;
-      }
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (inString) {
-        if (c == '\\') {
-          escape = true;
-        } else if (c == '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (c == '"') {
-        inString = true;
-        continue;
-      }
-      if (c == '{') {
-        depth++;
-      } else if (c == '}') {
-        depth--;
-        if (depth == 0 && start) {
-          const size_t len = static_cast<size_t>(p - start + 1);
-          char *tmp = static_cast<char *>(malloc(len + 1));
-          if (tmp) {
-            memcpy(tmp, start, len);
-            tmp[len] = 0;
-            pagesParseOne(tmp, &n);
-            free(tmp);
-          }
-          start = nullptr;
-        }
-      }
-    }
+  if (n == 0) {
+    jsonEachTopLevelObject(json, pagesParseOne, &n);
   }
   if (countOut) {
     *countOut = n;

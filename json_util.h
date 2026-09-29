@@ -438,21 +438,14 @@ inline void jsonEachArrayString(const char *json, const char *key, JsonStrFn fn,
   }
 }
 
-inline void jsonEachArrayObject(const char *json, const char *key, JsonObjFn fn, void *ctx) {
-  if (!json || !key || !fn) {
+// Walks the objects of an array whose '[' is just before p, up to the matching ']' (or the
+// end of the string). Each object, nested objects included, is copied and handed to fn.
+// Braces and escaped quotes inside strings do not count. Values that are not objects
+// (strings, numbers) at the array's top level are skipped.
+inline void jsonEachObjectAfterBracket(const char *p, JsonObjFn fn, void *ctx) {
+  if (!p || !fn) {
     return;
   }
-  char needle[48];
-  snprintf(needle, sizeof(needle), "\"%s\":", key);
-  const char *p = strstr(json, needle);
-  if (!p) {
-    return;
-  }
-  p = strchr(p, '[');
-  if (!p) {
-    return;
-  }
-  p++;
   const char *start = nullptr;
   int depth = 0;
   bool inString = false;
@@ -504,6 +497,33 @@ inline void jsonEachArrayObject(const char *json, const char *key, JsonObjFn fn,
       }
     }
   }
+}
+
+// Walks "key":[{...},{...}].
+inline void jsonEachArrayObject(const char *json, const char *key, JsonObjFn fn, void *ctx) {
+  if (!json || !key || !fn) {
+    return;
+  }
+  char needle[48];
+  snprintf(needle, sizeof(needle), "\"%s\":", key);
+  const char *p = strstr(json, needle);
+  if (!p) {
+    return;
+  }
+  p = strchr(p, '[');
+  if (!p) {
+    return;
+  }
+  jsonEachObjectAfterBracket(p + 1, fn, ctx);
+}
+
+// Walks a top-level array, [{...},{...}] (the form pages and recipes are stored in NVS).
+// Does nothing unless json[0] is '['.
+inline void jsonEachTopLevelObject(const char *json, JsonObjFn fn, void *ctx) {
+  if (!json || json[0] != '[') {
+    return;
+  }
+  jsonEachObjectAfterBracket(json + 1, fn, ctx);
 }
 
 inline bool jsonStringField(const String &body, const char *key, String *out) {

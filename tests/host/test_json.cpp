@@ -164,6 +164,46 @@ static void testEachArray() {
   }
 }
 
+static void testEachTopLevel() {
+  std::vector<std::string> v;
+  // Nested objects, "}" and "{" inside strings, and escaped quotes stay inside one object.
+  jsonEachTopLevelObject(
+      "[{\"id\":\"p1\",\"n\":\"}{\"},{\"id\":\"p2\",\"sub\":{\"a\":{\"b\":1}}},{\"q\":\"x\\\"}\"}]", collect, &v);
+  CHECK(v.size() == 3);
+  if (v.size() == 3) {
+    CHECK_STR(v[0], "{\"id\":\"p1\",\"n\":\"}{\"}");
+    CHECK_STR(v[1], "{\"id\":\"p2\",\"sub\":{\"a\":{\"b\":1}}}");
+    CHECK_STR(v[2], "{\"q\":\"x\\\"}\"}");
+  }
+
+  // Empty array.
+  v.clear();
+  jsonEachTopLevelObject("[]", collect, &v);
+  CHECK(v.empty());
+
+  // Stops at the closing ']': a later array is not walked.
+  v.clear();
+  jsonEachTopLevelObject("[ {\"a\":1} , {\"b\":[1,2]} ] [{\"c\":3}]", collect, &v);
+  CHECK(v.size() == 2);
+  if (v.size() == 2) {
+    CHECK_STR(v[0], "{\"a\":1}");
+    CHECK_STR(v[1], "{\"b\":[1,2]}");
+  }
+
+  // Not a top-level array: nothing, even if an array appears later.
+  v.clear();
+  jsonEachTopLevelObject("{\"pages\":[{\"a\":1}]}", collect, &v);
+  jsonEachTopLevelObject(" [{\"a\":1}]", collect, &v);
+  jsonEachTopLevelObject("", collect, &v);
+  jsonEachTopLevelObject(nullptr, collect, &v);
+  CHECK(v.empty());
+
+  // Unterminated: complete objects are handed over, the cut one is not.
+  v.clear();
+  jsonEachTopLevelObject("[{\"a\":1},{\"b\":", collect, &v);
+  CHECK(v.size() == 1);
+}
+
 // ---------------------------------------------------------------------------
 // json_util.h: JsonDataSink (streamed Clip v2 body)
 
@@ -444,6 +484,7 @@ int main() {
   testAsciiFold();
   testAppendEscaped();
   testEachArray();
+  testEachTopLevel();
   testSinkBasic();
   testSinkOversizedObjectDropped();
   testSinkSkipsSceneActions();
