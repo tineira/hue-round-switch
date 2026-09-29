@@ -4,6 +4,10 @@ User-facing release notes for the Round switch. One `### <version> — <date>` h
 
 Start a bullet with `Important: ` when the person must know or do something before or right after updating (a button to press, a setting to redo). The console shows those first, with an Important label, when Setup offers the update. Do not use it for new features.
 
+### Unreleased
+
+- Room, zone and scene names with letters such as Ł, č, ő or ş now show on the circle with the plain letter (for example "Łazienka" shows as "Lazienka") instead of leaving the letter out.
+
 ### 0.6.4 — 2026-09-29
 
 - Scenes with many lights now show up in the console, so you can pick them for a page. Before, a very large scene was left out of the list.

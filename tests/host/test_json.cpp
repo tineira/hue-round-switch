@@ -111,6 +111,20 @@ static void testAsciiFold() {
   char out[32];
   asciiFold(out, sizeof(out), "Cocina \xC3\xB1" "and\xC3\xBA");  // "Cocina ñandú"
   CHECK_STR(out, "Cocina nandu");
+  // Latin Extended-A (lead bytes 0xC4 / 0xC5) folds to the base letter.
+  asciiFold(out, sizeof(out), "\xC5\x81" "azienka");  // "Łazienka"
+  CHECK_STR(out, "Lazienka");
+  asciiFold(out, sizeof(out), "Kuchyn\xC4\x9B");  // "Kuchyně"
+  CHECK_STR(out, "Kuchyne");
+  asciiFold(out, sizeof(out), "I\xC5\x9F\xC4\xB1k");  // "Işık"
+  CHECK_STR(out, "Isik");
+  asciiFold(out, sizeof(out), "\xC4\x80\xC4\x8D\xC5\x91\xC5\xBE\xC5\xBF");  // "Āčőžſ": both ends
+  CHECK_STR(out, "Acozs");
+  asciiFold(out, sizeof(out), "\xC4\x90ur\xC4\x91" "a \xC5\x92uvre");  // "Đurđa Œuvre"
+  CHECK_STR(out, "Durda Ouvre");
+  // Other two-byte letters (Greek here) are still dropped.
+  asciiFold(out, sizeof(out), "a\xCE\xB1" "b");
+  CHECK_STR(out, "ab");
   asciiFold(out, sizeof(out), "Sala \xF0\x9F\x92\xA1!");  // emoji dropped
   CHECK_STR(out, "Sala !");
   asciiFoldClip(out, sizeof(out), "Living room lamps", 12);
