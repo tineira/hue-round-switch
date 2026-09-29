@@ -251,7 +251,8 @@ static void testSinkSkipsSceneActions() {
         "[],\"metadata\":{\"name\":\"Big party\"},\"group\":{\"rid\":\"room-1\",\"rtype\":\"room\"},"
         "\"status\":{\"active\":\"inactive\"}}";
     CHECK_STR(r.objs[1], "{\"id\":\"s-big\",\"type\":\"scene\",\"actions\":" + tail);
-    CHECK_STR(r.objs[2], "{\"id\":\"s-spaced\",\"type\":\"scene\",\"actions\" : " + tail);
+    // Whitespace after the colon goes with the skipped value.
+    CHECK_STR(r.objs[2], "{\"id\":\"s-spaced\",\"type\":\"scene\",\"actions\" :" + tail);
     CHECK_STR(r.objs[3], "{\"id\":\"s-after\",\"actions\":[],\"n\":1}");
 
     // What snapshotOnScene reads is still there.
