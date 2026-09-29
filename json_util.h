@@ -351,10 +351,12 @@ inline bool jsonFindRidByRtype(const char *json, const char *rtype, char *out, s
   return i > 0;
 }
 
+inline bool jsonIsSpace(char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
+
 typedef void (*JsonObjFn)(const char *obj, void *ctx);
 typedef void (*JsonStrFn)(const char *s, void *ctx);
 
-// Recorre "key":["a","b"] (strings, no objetos).
+// Walks "key":["a","b"] (strings, not objects).
 inline void jsonEachArrayString(const char *json, const char *key, JsonStrFn fn, void *ctx) {
   if (!json || !key || !fn) {
     return;
@@ -497,6 +499,8 @@ inline bool jsonStringField(const String &body, const char *key, String *out) {
 }
 
 // Receives the HTTP body (chunked already decoded) and hands over each object of data[].
+// A top-level "actions" value is not copied: it arrives as "actions":[]. Clip v2 scenes list
+// one action per light there, which can run past kMaxObj, and the snapshot never reads it.
 class JsonDataSink : public Stream {
  public:
   static const size_t kMaxObj = 20480;
@@ -541,6 +545,88 @@ class JsonDataSink : public Stream {
   bool escape_ = false;
   State state_ = kSeekData;
   uint8_t match_ = 0;
+  // Skipping the value of a top-level "actions" key (see the class comment).
+  bool skipping_ = false;
+  bool skipStarted_ = false;
+  bool skipInString_ = false;
+  bool skipEscape_ = false;
+  int skipNest_ = 0;
+
+  void startSkip() {
+    skipping_ = true;
+    skipStarted_ = false;
+    skipInString_ = false;
+    skipEscape_ = false;
+    skipNest_ = 0;
+  }
+
+  void finishSkip() {
+    skipping_ = false;
+    if (buf_ && len_ + 2 < kMaxObj) {
+      buf_[len_++] = '[';
+      buf_[len_++] = ']';
+    } else {
+      overflow = true;
+    }
+  }
+
+  // After a ':' at depth 1: is the key just before it "actions"?
+  bool keyIsActions() const {
+    static const char kKey[] = "\"actions\"";
+    static const size_t kKeyLen = sizeof(kKey) - 1;
+    size_t end = len_ - 1;  // the ':'
+    while (end > 0 && jsonIsSpace(buf_[end - 1])) {
+      end--;
+    }
+    return end >= kKeyLen + 1 && memcmp(buf_ + end - kKeyLen, kKey, kKeyLen) == 0;
+  }
+
+  // true: the byte belongs to the skipped value. false: the value ended just before this
+  // byte (a bare number / true / false / null), so the object parser takes it.
+  bool feedSkip(char c) {
+    if (!skipStarted_) {
+      if (jsonIsSpace(c)) {
+        return true;
+      }
+      skipStarted_ = true;
+      if (c == '[' || c == '{') {
+        skipNest_ = 1;
+      } else if (c == '"') {
+        skipInString_ = true;
+      }
+      return true;
+    }
+    if (skipInString_) {
+      if (skipEscape_) {
+        skipEscape_ = false;
+      } else if (c == '\\') {
+        skipEscape_ = true;
+      } else if (c == '"') {
+        skipInString_ = false;
+        if (skipNest_ == 0) {
+          finishSkip();
+        }
+      }
+      return true;
+    }
+    if (skipNest_ > 0) {
+      if (c == '"') {
+        skipInString_ = true;
+      } else if (c == '[' || c == '{') {
+        skipNest_++;
+      } else if (c == ']' || c == '}') {
+        if (--skipNest_ == 0) {
+          finishSkip();
+        }
+      }
+      return true;
+    }
+    if (c == ',' || c == '}' || c == ']') {
+      finishSkip();
+      return false;
+    }
+    return true;
+  }
 
   void feed(char c) {
     switch (state_) {
@@ -596,9 +682,13 @@ class JsonDataSink : public Stream {
           buf_[0] = '{';
           inString_ = false;
           escape_ = false;
+          skipping_ = false;
         }
         break;
       case kObject: {
+        if (skipping_ && feedSkip(c)) {
+          break;
+        }
         if (buf_ && len_ + 1 < kMaxObj) {
           buf_[len_++] = c;
         } else {
@@ -618,6 +708,10 @@ class JsonDataSink : public Stream {
         }
         if (c == '"') {
           inString_ = true;
+          break;
+        }
+        if (c == ':' && depth_ == 1 && !overflow && keyIsActions()) {
+          startSkip();
           break;
         }
         if (c == '{') {
