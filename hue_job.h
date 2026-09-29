@@ -92,6 +92,9 @@ inline bool gHueBgSet = false;
 // current one is not painted.
 inline std::atomic<uint32_t> gHueUserGen{1};
 inline QueueHandle_t gHueResultQ = nullptr;
+// A user command is running in the hueJob task. With one queued, it keeps an update from
+// starting (ota.h).
+inline std::atomic<bool> gHueUserRunning{false};
 inline TaskHandle_t gHueTask = nullptr;
 
 // Link → loop: READY was reached through setup or pairing. The loop binds the bridge id
@@ -146,6 +149,14 @@ inline void hueJobPostBg(HueJob &job) {
   gHueBgSet = true;
   portEXIT_CRITICAL(&gHueJobMux);
   hueJobNotify();
+}
+
+// Any task: no user command queued or running.
+inline bool hueJobUserIdle() {
+  portENTER_CRITICAL(&gHueJobMux);
+  const bool queued = gHueUserSet;
+  portEXIT_CRITICAL(&gHueJobMux);
+  return !queued && !gHueUserRunning;
 }
 
 inline bool hueJobTakeResult(HueJobResult *out) {
@@ -356,12 +367,15 @@ inline void huePostResult(const HueJobResult &r) {
   }
 }
 
+// Taken from the queue and marked running in one step, so hueJobUserIdle never sees neither.
+// hueServeUser clears the mark once it ran.
 inline bool hueTakeUser(HueJob *out) {
   portENTER_CRITICAL(&gHueJobMux);
   const bool have = gHueUserSet;
   if (have) {
     *out = gHueUser;
     gHueUserSet = false;
+    gHueUserRunning = true;
   }
   portEXIT_CRITICAL(&gHueJobMux);
   return have;
@@ -513,6 +527,7 @@ inline bool hueServeUser() {
   bool ran = false;
   while (hueTakeUser(&job)) {
     hueRunUserJob(job);
+    gHueUserRunning = false;
     ran = true;
   }
   return ran;
@@ -535,6 +550,7 @@ inline void hueFailUser() {
     }
     r.ok = false;
     huePostResult(r);
+    gHueUserRunning = false;
   }
 }
 

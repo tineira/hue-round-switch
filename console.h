@@ -244,6 +244,8 @@ inline int consoleHttp(const char *method, const String &path, const char *body,
   return code;
 }
 
+#include "ota.h"
+
 inline bool consoleJobBusy() {
   portENTER_CRITICAL(&gConsoleMux);
   const bool busy = gConsolePending || gConsoleWorkerBusy;
@@ -329,12 +331,14 @@ inline void consoleFetchConfigHttp() {
     snprintf(revBuf, sizeof(revBuf), "&rev=%lu", static_cast<unsigned long>(gRecipeRev));
     path += revBuf;
   }
+  otaAppendQuery(path);
   String body;
   uint32_t pollSec = 0;
   const int code = consoleHttp("GET", path, nullptr, &body, &pollSec);
   LOG("console GET config %d poll %us\n", code, static_cast<unsigned>(pollSec));
   if (code == HTTP_CODE_OK || code == HTTP_CODE_NO_CONTENT) {
     gConsolePollSec = pollSec;
+    otaPollAccepted();
   } else if (code == HTTP_CODE_UNAUTHORIZED) {
     gConsolePollSec = kPollSecMax;
   }
@@ -352,6 +356,8 @@ inline void consoleFetchConfigHttp() {
     }
     return;
   }
+  // Whatever the rev: while an update is offered the console answers 200 with an unchanged rev.
+  otaParseOffer(body.c_str());
   if (epoch != gConsoleEpoch || !gConsoleConfigQ) {
     return;
   }
@@ -458,7 +464,13 @@ inline void consoleJobTask(void * /*arg*/) {
       if (doRegister) {
         consoleRegister();
       }
+      gOtaOfferValid = false;
       consoleFetchConfigHttp();
+      // The poll's connection is closed and its body is the loop's: the download runs alone.
+      if (consoleConfigured()) {
+        otaMaybeApply();
+      }
+      gOtaOfferValid = false;
     }
   }
 }
