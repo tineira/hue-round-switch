@@ -4,9 +4,10 @@ User-facing release notes for the Round switch. One `### <version> — <date>` h
 
 Start a bullet with `Important: ` when the person must know or do something before or right after updating (a button to press, a setting to redo). The console shows those first, with an Important label, when Setup offers the update. Do not use it for new features.
 
-### Unreleased
+### 0.6.5 — 2026-10-01
 
-- Room, zone and scene names with letters such as Ł, č, ő or ş now show on the circle with the plain letter (for example "Łazienka" shows as "Lazienka") instead of leaving the letter out.
+- Page and scene names on the circle now keep ñ, accents, ü, ç, ¿ and ¡: "Niños" and "Canción" show as written instead of "Ninos" and "Cancion". Capital Á, Í, Ó and Ú still show as the plain capital ("Ángel" shows as "Angel"). Names saved before this update keep their plain letters until the next time you save the switch's pages in the console.
+- Letters the circle can't draw, such as Ł, č, ő or ş, now show as the plain letter (for example "Łazienka" shows as "Lazienka") instead of being left out.
 
 ### 0.6.4 — 2026-09-29
 

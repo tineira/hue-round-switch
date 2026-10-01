@@ -3,6 +3,7 @@
 #include <Arduino_GFX_Library.h>
 #include <SPI.h>
 #include "driver/gpio.h"
+#include "json_util.h"
 
 // Round Display for XIAO: GC9A01 240×240. Seeed pins (no global User_Setup).
 
@@ -71,7 +72,12 @@ inline void displayWakePanel() {
   }
 }
 
-inline void displayTextCenter(const char *s, int16_t cy, uint8_t size, uint16_t color) {
+// Text arrives as UTF-8 (names keep ñ, é, ...). The built-in font draws one CP437 byte per
+// glyph, so every string goes through circleToCp437 before it is measured or printed.
+static const size_t kDisplayTextMax = 64;
+
+// s is already in font bytes (CP437).
+inline void displayTextCenterCp437(const char *s, int16_t cy, uint8_t size, uint16_t color) {
   if (!gDisplayOk || !gLcd || !s) {
     return;
   }
@@ -86,15 +92,27 @@ inline void displayTextCenter(const char *s, int16_t cy, uint8_t size, uint16_t 
   gLcd->print(s);
 }
 
-// Truncates with '.' at the end. Returns false if not even 8 characters fit (skip the scene).
+inline void displayTextCenter(const char *s, int16_t cy, uint8_t size, uint16_t color) {
+  if (!gDisplayOk || !gLcd || !s) {
+    return;
+  }
+  char buf[kDisplayTextMax];
+  circleToCp437(buf, sizeof(buf), s);
+  displayTextCenterCp437(buf, cy, size, color);
+}
+
+// UTF-8 in. Truncates with '.' at the end, one character per byte after the CP437
+// conversion. Returns false if not even minChars characters fit (skip the scene).
 inline bool displayTextEllipsis(const char *s, int16_t cy, uint8_t size, uint16_t color, int16_t maxW,
                                uint8_t minChars = 1) {
   if (!gDisplayOk || !gLcd || !s || !s[0] || maxW < 6) {
     return false;
   }
-  char buf[40];
-  strncpy(buf, s, sizeof(buf) - 1);
-  buf[sizeof(buf) - 1] = 0;
+  char buf[kDisplayTextMax];
+  circleToCp437(buf, sizeof(buf), s);
+  if (!buf[0]) {
+    return false;
+  }
   gLcd->setTextSize(size);
   int16_t x1 = 0, y1 = 0;
   uint16_t w = 0, h = 0;
@@ -113,6 +131,6 @@ inline bool displayTextEllipsis(const char *s, int16_t cy, uint8_t size, uint16_
   if (w > (uint16_t)maxW) {
     return false;
   }
-  displayTextCenter(buf, cy, size, color);
+  displayTextCenterCp437(buf, cy, size, color);
   return true;
 }

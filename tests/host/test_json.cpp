@@ -107,30 +107,124 @@ static void testFindRidByRtype() {
   CHECK(!jsonFindRidByRtype(room, "light", out, sizeof(out)));
 }
 
-static void testAsciiFold() {
-  char out[32];
-  asciiFold(out, sizeof(out), "Cocina \xC3\xB1" "and\xC3\xBA");  // "Cocina ñandú"
-  CHECK_STR(out, "Cocina nandu");
-  // Latin Extended-A (lead bytes 0xC4 / 0xC5) folds to the base letter.
-  asciiFold(out, sizeof(out), "\xC5\x81" "azienka");  // "Łazienka"
+// The circle set, as the console spells it (ROUND_CIRCLE_CHARS) and its CP437 codes
+// (console docs/specs/round-accented-names.md §2), in the same order.
+static const char *kCircleChars = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜáíóúñÑ¿¡ß";
+static const uint8_t kCircleCodes[] = {
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B,
+    0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+    0x98, 0x99, 0x9A, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA8, 0xAD, 0xE1};
+
+static void testCircleFold() {
+  char out[64];
+  // ASCII and the circle set stay as UTF-8.
+  circleFold(out, sizeof(out), "Niños");
+  CHECK_STR(out, "Niños");
+  circleFold(out, sizeof(out), "Canción");
+  CHECK_STR(out, "Canción");
+  circleFold(out, sizeof(out), "¿Qué?");
+  CHECK_STR(out, "¿Qué?");
+  circleFold(out, sizeof(out), "Ñandú");
+  CHECK_STR(out, "Ñandú");
+  circleFold(out, sizeof(out), "¡Hola! Größe Ærø");
+  CHECK_STR(out, "¡Hola! Größe Æro");
+  circleFold(out, sizeof(out), kCircleChars);
+  CHECK_STR(out, kCircleChars);
+  // Other Latin-1 / Latin Extended-A letters fold to the base letter. Capital Á, Í, Ó, Ú
+  // have no glyph and become the plain capital.
+  circleFold(out, sizeof(out), "Ángel Íñigo Óscar Úrsula");
+  CHECK_STR(out, "Angel Iñigo Oscar Ursula");
+  circleFold(out, sizeof(out), "Łazienka");
   CHECK_STR(out, "Lazienka");
-  asciiFold(out, sizeof(out), "Kuchyn\xC4\x9B");  // "Kuchyně"
+  circleFold(out, sizeof(out), "Øre");
+  CHECK_STR(out, "Ore");
+  circleFold(out, sizeof(out), "Kuchyně");
   CHECK_STR(out, "Kuchyne");
-  asciiFold(out, sizeof(out), "I\xC5\x9F\xC4\xB1k");  // "Işık"
+  circleFold(out, sizeof(out), "Işık");
   CHECK_STR(out, "Isik");
-  asciiFold(out, sizeof(out), "\xC4\x80\xC4\x8D\xC5\x91\xC5\xBE\xC5\xBF");  // "Āčőžſ": both ends
+  circleFold(out, sizeof(out), "Āčőžſ");  // both ends of Latin Extended-A
   CHECK_STR(out, "Acozs");
-  asciiFold(out, sizeof(out), "\xC4\x90ur\xC4\x91" "a \xC5\x92uvre");  // "Đurđa Œuvre"
+  circleFold(out, sizeof(out), "Đurđa Œuvre");
   CHECK_STR(out, "Durda Ouvre");
-  // Other two-byte letters (Greek here) are still dropped.
-  asciiFold(out, sizeof(out), "a\xCE\xB1" "b");
+  circleFold(out, sizeof(out), "Ãõ Ðþ");
+  CHECK_STR(out, "Ao Dt");
+  // Dropped: other scripts, emoji, symbols, combining marks, × and ÷ (as the console does).
+  circleFold(out, sizeof(out), "aαb");
   CHECK_STR(out, "ab");
-  asciiFold(out, sizeof(out), "Sala \xF0\x9F\x92\xA1!");  // emoji dropped
+  circleFold(out, sizeof(out), "Sala \xF0\x9F\x92\xA1!");  // emoji
   CHECK_STR(out, "Sala !");
-  asciiFoldClip(out, sizeof(out), "Living room lamps", 12);
-  CHECK_STR(out, "Living room.");
-  asciiFoldClip(out, sizeof(out), "Short", 12);
-  CHECK_STR(out, "Short");
+  circleFold(out, sizeof(out), "2×2÷1 °C €");
+  CHECK_STR(out, "221 C ");
+  circleFold(out, sizeof(out), "n\xCC\x83");  // n + combining tilde (not NFC)
+  CHECK_STR(out, "n");
+  circleFold(out, sizeof(out), "a\tb\x7F" "c");
+  CHECK_STR(out, "abc");
+  // Broken UTF-8: stray bytes are skipped, the rest survives.
+  circleFold(out, sizeof(out), "a\xC3(b\xA4" "c\xC3");
+  CHECK_STR(out, "a(bc");
+  // A full buffer never ends in half a character.
+  char tiny[4];
+  circleFold(tiny, sizeof(tiny), "Niño");
+  CHECK_STR(tiny, "Ni");
+  circleFold(tiny, sizeof(tiny), "ñañ");
+  CHECK_STR(tiny, "ña");
+}
+
+static void testCircleFoldClip() {
+  char page[25];  // Page.name
+  circleFoldClip(page, sizeof(page), "Living room lamps", kPageNameMax);
+  CHECK_STR(page, "Living room.");
+  circleFoldClip(page, sizeof(page), "Short", kPageNameMax);
+  CHECK_STR(page, "Short");
+  // 12 characters, not bytes: twelve ñ (24 bytes) fit whole.
+  circleFoldClip(page, sizeof(page), "ññññññññññññ", kPageNameMax);
+  CHECK_STR(page, "ññññññññññññ");
+  CHECK(utf8Chars(page) == 12);
+  circleFoldClip(page, sizeof(page), "ñññññññññññññ", kPageNameMax);
+  CHECK_STR(page, "ñññññññññññ.");
+  CHECK(utf8Chars(page) == 12);
+  circleFoldClip(page, sizeof(page), "Habitación niños", kPageNameMax);
+  CHECK_STR(page, "Habitación .");
+  CHECK(utf8Chars(page) == 12);
+  // A buffer too small for the characters clips by bytes, never inside ñ.
+  char small[13];
+  circleFoldClip(small, sizeof(small), "ññññññññññññ", kPageNameMax);
+  CHECK_STR(small, "ñññññ.");
+  circleFoldClip(small, sizeof(small), "aññññññññññ", kPageNameMax);
+  CHECK_STR(small, "añññññ.");
+  char scene[49];  // RecipeScene.name
+  circleFoldClip(scene, sizeof(scene), "Canción de cuna para niños pequeños", kSceneNameMax);
+  CHECK_STR(scene, "Canción de cuna para ni.");
+  CHECK(utf8Chars(scene) == 24);
+  circleFoldClip(scene, sizeof(scene), "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûù", kSceneNameMax);
+  CHECK_STR(scene, "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûù");  // 24 two-byte characters: 48 bytes
+}
+
+static void testCircleToCp437() {
+  // Every circle-set entry maps to its CP437 code, one byte each.
+  char out[64];
+  circleToCp437(out, sizeof(out), kCircleChars);
+  CHECK(strlen(out) == sizeof(kCircleCodes));
+  for (size_t i = 0; i < sizeof(kCircleCodes) && out[i]; i++) {
+    if (static_cast<uint8_t>(out[i]) != kCircleCodes[i]) {
+      CHECK(static_cast<uint8_t>(out[i]) == kCircleCodes[i]);
+      fprintf(stderr, "  circle set entry %zu\n", i);
+    }
+  }
+  CHECK(sizeof(kCircleSet) / sizeof(kCircleSet[0]) == sizeof(kCircleCodes));
+  CHECK(utf8Chars(kCircleChars) == sizeof(kCircleCodes));
+  circleToCp437(out, sizeof(out), "Niños");
+  CHECK_STR(out, "Ni\xA4os");
+  circleToCp437(out, sizeof(out), "¿Qué?");
+  CHECK_STR(out, "\xA8Qu\x82?");
+  circleToCp437(out, sizeof(out), "Round 0.6.5");
+  CHECK_STR(out, "Round 0.6.5");
+  // Not in the circle set (not folded first): left out rather than drawn as garbage.
+  circleToCp437(out, sizeof(out), "Ángel \xF0\x9F\x92\xA1");
+  CHECK_STR(out, "ngel ");
+  char tiny[3];
+  circleToCp437(tiny, sizeof(tiny), "ñañ");
+  CHECK_STR(tiny, "\xA4" "a");
 }
 
 static void testAppendEscaped() {
@@ -140,6 +234,9 @@ static void testAppendEscaped() {
   String n;
   jsonAppendEscaped(n, nullptr);
   CHECK_STR(n.c_str(), "\"\"");
+  String u;
+  jsonAppendEscaped(u, "Niños ¿sí?");  // UTF-8 bytes pass through unchanged
+  CHECK_STR(u.c_str(), "\"Niños ¿sí?\"");
 }
 
 static void collect(const char *s, void *ctx) { static_cast<std::vector<std::string> *>(ctx)->push_back(s); }
@@ -345,7 +442,7 @@ static const char *kPoll =
     "],"
     "\"recipes\":["
     "{\"pageId\":\"p1\",\"event\":\"short\",\"action\":\"recall_scene\",\"targets\":["
-    "{\"rtype\":\"scene\",\"rid\":\"s1\",\"name\":\"Relax\"},{\"rid\":\"s2\",\"name\":\"Read\"},"
+    "{\"rtype\":\"scene\",\"rid\":\"s1\",\"name\":\"Relajación\"},{\"rid\":\"s2\",\"name\":\"Read\"},"
     "{\"rtype\":\"light\",\"rid\":\"bad\"}]},"
     "{\"pageId\":\"p1\",\"event\":\"double_click\",\"action\":\"toggle\","
     "\"target\":{\"rtype\":\"grouped_light\",\"rid\":\"gl-1\"}},"
@@ -366,7 +463,7 @@ static void testConfigPoll() {
   CHECK(gPageSwipeAxis == PAGE_SWIPE_VERTICAL);
   CHECK(gScreenTimeoutSec == kScreenTimeoutMin);  // 5 is clamped up
   CHECK_STR(gPages[0].id, "p1");
-  CHECK_STR(gPages[0].name, "Cocina nand.");  // folded to ASCII, clipped to 12 characters
+  CHECK_STR(gPages[0].name, "Cocina ñand.");  // keeps ñ, clipped to 12 characters
   CHECK_STR(gPages[0].theme, "ocean");
   CHECK_STR(gPages[0].group.rtype, "room");
   CHECK_STR(gPages[0].group.groupedLightRid, "gl-1");
@@ -388,6 +485,7 @@ static void testConfigPoll() {
     CHECK_STR(tap->action, "recall_scene");
     CHECK(tap->sceneCount == 2);  // the light target is dropped
     CHECK_STR(tap->rid, "s1");
+    CHECK_STR(tap->scenes[0].name, "Relajación");
     CHECK_STR(tap->scenes[1].name, "Read");
   }
   const HueRecipe *dbl = recipesFind("p1", "double_click");
@@ -475,13 +573,79 @@ static void testNvsRoundTrip() {
   CHECK_STR(pagesToJson().c_str(), pages.c_str());
 }
 
+// Longest names (two bytes per character) and longest ids still fit NVS: the pages blob in
+// one putString, the recipes in their chunks, each under the 4000-byte limit.
+static void testNvsLongestNames() {
+  static const char *kRid = "0123abcd-4567-89ef-0123-456789abcdef";  // a Hue rid: 36 characters
+  gPageCount = kMaxPages;
+  gPageIndex = 0;
+  for (uint8_t i = 0; i < kMaxPages; i++) {
+    Page &p = gPages[i];
+    memset(&p, 0, sizeof(p));
+    snprintf(p.id, sizeof(p.id), "page-%u-abcdefgh", i);
+    circleFoldClip(p.name, sizeof(p.name), "ÑÑÑÑÑÑÑÑÑÑÑÑ", kPageNameMax);
+    pageCopyField(p.theme, sizeof(p.theme), "ember");
+    pageCopyField(p.group.rtype, sizeof(p.group.rtype), "room");
+    pageCopyField(p.group.rid, sizeof(p.group.rid), kRid);
+    pageCopyField(p.group.groupedLightRid, sizeof(p.group.groupedLightRid), kRid);
+    p.dimMode = PAGE_DIM_LIGHTS;
+    p.dimLightCount = kMaxDimLights;
+    for (uint8_t j = 0; j < kMaxDimLights; j++) {
+      pageCopyField(p.dimLights[j], sizeof(p.dimLights[0]), kRid);
+    }
+  }
+  CHECK(utf8Chars(gPages[0].name) == 12);
+  const String pages = pagesToJson();
+  CHECK(pages.length() < 4000);
+  CHECK(pagesSave());
+  gPageCount = 0;
+  pagesLoad();
+  CHECK(gPageCount == kMaxPages);
+  CHECK_STR(gPages[5].name, "ÑÑÑÑÑÑÑÑÑÑÑÑ");
+  CHECK_STR(pagesToJson().c_str(), pages.c_str());
+
+  // Every page with a tap and a double tap, each cycling the most scenes.
+  static const char *kEvents[] = {"short", "double_click"};
+  gRecipeCount = 0;
+  for (uint8_t i = 0; i < kMaxPages; i++) {
+    for (const char *ev : kEvents) {
+      HueRecipe &r = gRecipes[gRecipeCount++];
+      memset(&r, 0, sizeof(r));
+      recipeCopyField(r.pageId, sizeof(r.pageId), gPages[i].id);
+      recipeCopyField(r.event, sizeof(r.event), ev);
+      recipeCopyField(r.action, sizeof(r.action), "recall_scene");
+      recipeCopyField(r.rtype, sizeof(r.rtype), "scene");
+      recipeCopyField(r.rid, sizeof(r.rid), kRid);
+      r.sceneCount = kMaxScenes;
+      for (uint8_t s = 0; s < kMaxScenes; s++) {
+        recipeCopyField(r.scenes[s].rid, sizeof(r.scenes[0].rid), kRid);
+        circleFoldClip(r.scenes[s].name, sizeof(r.scenes[0].name), "üüüüüüüüüüüüüüüüüüüüüüüü",
+                       kSceneNameMax);
+      }
+    }
+  }
+  CHECK(utf8Chars(gRecipes[0].scenes[0].name) == 24);
+  const String recipes = recipesToJson();
+  gRecipeRev = 11;
+  CHECK(recipesSave());
+  for (const auto &kv : Preferences::store()["recipes"]) {
+    CHECK(kv.second.size() < 4000);
+  }
+  gRecipeCount = 0;
+  recipesLoad();
+  CHECK(gRecipeCount == 2 * kMaxPages);
+  CHECK_STR(recipesToJson().c_str(), recipes.c_str());
+}
+
 int main() {
   testGetString();
   testObjectString();
   testGetInt();
   testHueState();
   testFindRidByRtype();
-  testAsciiFold();
+  testCircleFold();
+  testCircleFoldClip();
+  testCircleToCp437();
   testAppendEscaped();
   testEachArray();
   testEachTopLevel();
@@ -493,6 +657,7 @@ int main() {
   testConfigPollKeepsActivePage();
   testConfigPollRejects();
   testNvsRoundTrip();
+  testNvsLongestNames();
   if (gFailures) {
     fprintf(stderr, "%d of %d checks failed\n", gFailures, gChecks);
     return 1;

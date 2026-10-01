@@ -212,10 +212,76 @@ inline bool jsonHueSceneActive(const char *json, bool *active) {
   return true;
 }
 
-// 5×7 font: letters with accents fold to their base letter (ñ→n, Ł→L); other non-ASCII is
-// dropped. The circle does not paint UTF-8. Covers Latin-1 (lead byte 0xC3) and Latin
-// Extended-A (U+0100–U+017F, lead bytes 0xC4 and 0xC5).
-inline void asciiFold(char *dst, size_t dstSz, const char *src) {
+// The circle set: characters the circle's 5×7 font (GFX Library built-in font, IBM code
+// page 437) has a glyph for, beyond ASCII. Code point (all in Latin-1) → CP437 byte.
+// Must match ROUND_CIRCLE_CHARS in the console (lib/round-themes.ts) and the table in its
+// docs/specs/round-accented-names.md §2. Changes only if the font changes.
+struct CircleGlyph {
+  uint8_t cp;
+  uint8_t cp437;
+};
+
+static const CircleGlyph kCircleSet[] = {
+    {0xC7, 0x80}, {0xFC, 0x81}, {0xE9, 0x82}, {0xE2, 0x83},  // Ç ü é â
+    {0xE4, 0x84}, {0xE0, 0x85}, {0xE5, 0x86}, {0xE7, 0x87},  // ä à å ç
+    {0xEA, 0x88}, {0xEB, 0x89}, {0xE8, 0x8A}, {0xEF, 0x8B},  // ê ë è ï
+    {0xEE, 0x8C}, {0xEC, 0x8D}, {0xC4, 0x8E}, {0xC5, 0x8F},  // î ì Ä Å
+    {0xC9, 0x90}, {0xE6, 0x91}, {0xC6, 0x92}, {0xF4, 0x93},  // É æ Æ ô
+    {0xF6, 0x94}, {0xF2, 0x95}, {0xFB, 0x96}, {0xF9, 0x97},  // ö ò û ù
+    {0xFF, 0x98}, {0xD6, 0x99}, {0xDC, 0x9A}, {0xE1, 0xA0},  // ÿ Ö Ü á
+    {0xED, 0xA1}, {0xF3, 0xA2}, {0xFA, 0xA3}, {0xF1, 0xA4},  // í ó ú ñ
+    {0xD1, 0xA5}, {0xBF, 0xA8}, {0xA1, 0xAD}, {0xDF, 0xE1},  // Ñ ¿ ¡ ß
+};
+
+// CP437 byte for a code point in the circle set, or 0.
+inline uint8_t circleGlyph(uint32_t cp) {
+  if (cp < 0x80 || cp > 0xFF) {
+    return 0;
+  }
+  for (const CircleGlyph &g : kCircleSet) {
+    if (g.cp == cp) {
+      return g.cp437;
+    }
+  }
+  return 0;
+}
+
+// Length of the UTF-8 sequence that starts at p (1–4) and its code point, or 0 if it is not a
+// whole, well-formed sequence (bad lead byte, missing or bad continuation byte).
+inline uint8_t utf8SeqLen(const uint8_t *p, uint32_t *cpOut) {
+  const uint8_t c = p[0];
+  uint8_t len;
+  uint32_t cp;
+  if (c < 0x80) {
+    *cpOut = c;
+    return 1;
+  } else if ((c & 0xE0) == 0xC0) {
+    len = 2;
+    cp = c & 0x1F;
+  } else if ((c & 0xF0) == 0xE0) {
+    len = 3;
+    cp = c & 0x0F;
+  } else if ((c & 0xF8) == 0xF0) {
+    len = 4;
+    cp = c & 0x07;
+  } else {
+    return 0;
+  }
+  for (uint8_t i = 1; i < len; i++) {
+    if ((p[i] & 0xC0) != 0x80) {
+      return 0;
+    }
+    cp = (cp << 6) | (p[i] & 0x3F);
+  }
+  *cpOut = cp;
+  return len;
+}
+
+// Names for the circle, kept as UTF-8: ASCII and the circle set stay (ñ, é, ü, ¿, ...).
+// Other Latin-1 and Latin Extended-A letters fold to their base letter (Á→A, Ø→O, Ł→L,
+// ő→o); everything else (other scripts, emoji, symbols, control characters) is dropped.
+// Same result as foldForCircle in the console (lib/pages.ts), apart from its trim.
+inline void circleFold(char *dst, size_t dstSz, const char *src) {
   if (!dst || dstSz == 0) {
     return;
   }
@@ -223,11 +289,12 @@ inline void asciiFold(char *dst, size_t dstSz, const char *src) {
   if (!src) {
     return;
   }
+  // U+00C0–U+00FF. 0 = dropped (× and ÷). Circle-set letters never reach this table.
   static const char kC3[64] = {
       'A', 'A', 'A', 'A', 'A', 'A', 'A', 'C', 'E', 'E', 'E', 'E', 'I', 'I', 'I', 'I',
-      'D', 'N', 'O', 'O', 'O', 'O', 'O', 'x', 'O', 'U', 'U', 'U', 'U', 'Y', 'T', 's',
+      'D', 'N', 'O', 'O', 'O', 'O', 'O', 0,   'O', 'U', 'U', 'U', 'U', 'Y', 'T', 's',
       'a', 'a', 'a', 'a', 'a', 'a', 'a', 'c', 'e', 'e', 'e', 'e', 'i', 'i', 'i', 'i',
-      'd', 'n', 'o', 'o', 'o', 'o', 'o', 'x', 'o', 'u', 'u', 'u', 'u', 'y', 't', 'y'};
+      'd', 'n', 'o', 'o', 'o', 'o', 'o', 0,   'o', 'u', 'u', 'u', 'u', 'y', 't', 'y'};
   // U+0100–U+017F. Letters without a decomposition take the closest base letter
   // (Đ→D, Ħ→H, ı→i, Ł→L, Ŋ→N, Ŧ→T, ſ→s; the ligatures Ĳ and Œ keep their first letter).
   static const char kC4C5[128] = {
@@ -241,59 +308,116 @@ inline void asciiFold(char *dst, size_t dstSz, const char *src) {
       'U', 'u', 'U', 'u', 'W', 'w', 'Y', 'y', 'Y', 'Z', 'z', 'Z', 'z', 'Z', 'z', 's'};
   size_t o = 0;
   const uint8_t *p = reinterpret_cast<const uint8_t *>(src);
-  while (*p && o + 1 < dstSz) {
-    const uint8_t c = *p++;
-    if (c < 0x80) {
-      if (c >= 32 && c != 127) {
-        dst[o++] = static_cast<char>(c);
-      }
+  while (*p) {
+    uint32_t cp = 0;
+    const uint8_t len = utf8SeqLen(p, &cp);
+    if (len == 0) {
+      p++;  // a stray byte: skip it and resync on the next one
       continue;
     }
-    if ((c & 0xE0) == 0xC0 && *p) {
-      const uint8_t c2 = *p++;
-      if (c2 >= 0x80 && c2 < 0xC0) {
-        if (c == 0xC3) {
-          dst[o++] = kC3[c2 - 0x80];
-        } else if (c == 0xC4 || c == 0xC5) {
-          dst[o++] = kC4C5[(c - 0xC4) * 64 + (c2 - 0x80)];
+    const uint8_t *seq = p;
+    p += len;
+    if (len == 1) {
+      if (cp >= 32 && cp != 127) {
+        if (o + 1 >= dstSz) {
+          break;
         }
+        dst[o++] = static_cast<char>(cp);
       }
       continue;
     }
-    if ((c & 0xF0) == 0xE0 && p[0] && p[1]) {
-      p += 2;
+    if (len == 2 && circleGlyph(cp)) {
+      if (o + 2 >= dstSz) {
+        break;
+      }
+      dst[o++] = static_cast<char>(seq[0]);
+      dst[o++] = static_cast<char>(seq[1]);
       continue;
     }
-    if ((c & 0xF8) == 0xF0 && p[0] && p[1] && p[2]) {
-      p += 3;
-      continue;
+    char base = 0;
+    if (cp >= 0xC0 && cp <= 0xFF) {
+      base = kC3[cp - 0xC0];
+    } else if (cp >= 0x100 && cp <= 0x17F) {
+      base = kC4C5[cp - 0x100];
+    }
+    if (base) {
+      if (o + 1 >= dstSz) {
+        break;
+      }
+      dst[o++] = base;
     }
   }
   dst[o] = 0;
 }
 
-inline void asciiFoldClip(char *dst, size_t dstSz, const char *src, uint8_t maxChars) {
-  char fold[96];
-  asciiFold(fold, sizeof(fold), src);
+// Characters (not bytes) in a UTF-8 string.
+inline size_t utf8Chars(const char *s) {
+  size_t n = 0;
+  for (; s && *s; s++) {
+    if ((static_cast<uint8_t>(*s) & 0xC0) != 0x80) {
+      n++;
+    }
+  }
+  return n;
+}
+
+// circleFold, then at most maxChars characters: a longer name keeps maxChars - 1 characters
+// and ends in '.'. Never splits a UTF-8 sequence, and never writes past dstSz bytes.
+inline void circleFoldClip(char *dst, size_t dstSz, const char *src, uint8_t maxChars) {
   if (!dst || dstSz == 0) {
     return;
   }
-  if (maxChars + 1 < dstSz) {
-    dstSz = static_cast<size_t>(maxChars) + 1;
-  }
+  char fold[128];
+  circleFold(fold, sizeof(fold), src);
   const size_t n = strlen(fold);
-  if (n + 1 <= dstSz) {
+  if (utf8Chars(fold) <= maxChars && n + 1 <= dstSz) {
     memcpy(dst, fold, n + 1);
     return;
   }
-  if (dstSz < 2) {
+  if (maxChars == 0 || dstSz < 2) {
     dst[0] = 0;
     return;
   }
-  size_t keep = dstSz - 2;
+  // circleFold output holds only 1-byte (ASCII) and 2-byte (circle set) sequences.
+  size_t keep = 0;
+  uint8_t chars = 0;
+  while (keep < n && chars + 1 < maxChars) {
+    const size_t len = (static_cast<uint8_t>(fold[keep]) & 0x80) ? 2 : 1;
+    if (keep + len + 2 > dstSz) {
+      break;
+    }
+    keep += len;
+    chars++;
+  }
   memcpy(dst, fold, keep);
   dst[keep] = '.';
   dst[keep + 1] = 0;
+}
+
+// UTF-8 → the font's bytes, one byte per character: ASCII as is, the circle set as its CP437
+// code. Anything else is left out (stored names are already folded). The drawing code
+// measures and trims this, so its ellipsis works one byte per character.
+inline void circleToCp437(char *dst, size_t dstSz, const char *src) {
+  if (!dst || dstSz == 0) {
+    return;
+  }
+  size_t o = 0;
+  const uint8_t *p = reinterpret_cast<const uint8_t *>(src ? src : "");
+  while (*p && o + 1 < dstSz) {
+    uint32_t cp = 0;
+    const uint8_t len = utf8SeqLen(p, &cp);
+    if (len == 0) {
+      p++;
+      continue;
+    }
+    p += len;
+    if (len == 1) {
+      dst[o++] = static_cast<char>(cp);
+    } else if (const uint8_t g = circleGlyph(cp)) {
+      dst[o++] = static_cast<char>(g);
+    }
+  }
+  dst[o] = 0;
 }
 
 inline bool jsonHueBrightness(const char *json, int *pct) {
