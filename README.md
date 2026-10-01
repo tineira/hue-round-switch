@@ -50,6 +50,10 @@ A fork builds the same image and can upload it to its own console (see the self-
 
 Without the secret, a fork's run still builds the image, checks the credits and keeps the `usb-installer` release, and skips the upload with a notice. On `tineira/hue-round-switch` a missing secret fails the run.
 
+## Safety
+
+The Round is a low-voltage build: it runs on USB-C only. Never connect any of its pins to anything that is or was on mains. Soldering and USB power can still cause burns or damage. Status: built by the maintainer, one installation. The design and firmware are provided as is, without warranty, as the license says. Read the [Safety notice](https://hue.tineira.com/safety) before you build.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and ideas go in GitHub issues.
