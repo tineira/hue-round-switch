@@ -116,7 +116,7 @@ static const uint8_t kCircleCodes[] = {
     0x98, 0x99, 0x9A, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA8, 0xAD, 0xE1};
 
 static void testCircleFold() {
-  char out[64];
+  char out[96];  // kCircleChars alone is 72 bytes
   // ASCII and the circle set stay as UTF-8.
   circleFold(out, sizeof(out), "Niños");
   CHECK_STR(out, "Niños");
@@ -591,7 +591,8 @@ static void testNvsLongestNames() {
     p.dimMode = PAGE_DIM_LIGHTS;
     p.dimLightCount = kMaxDimLights;
     for (uint8_t j = 0; j < kMaxDimLights; j++) {
-      pageCopyField(p.dimLights[j], sizeof(p.dimLights[0]), kRid);
+      // Distinct rids: loading drops a repeated dim light.
+      snprintf(p.dimLights[j], sizeof(p.dimLights[0]), "0123abcd-4567-89ef-0123-456789abcde%u", j);
     }
   }
   CHECK(utf8Chars(gPages[0].name) == 12);
