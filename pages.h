@@ -24,7 +24,7 @@ struct PageGroup {
 
 struct Page {
   char id[16];
-  char name[13];
+  char name[25];  // UTF-8, up to 12 characters (circle set: 2 bytes each)
   char theme[16];
   PageGroup group;
   PageDimMode dimMode;
@@ -444,7 +444,7 @@ inline bool pageFromObject(const char *obj, Page *out) {
     return false;
   }
   char id[16];
-  char name[48];
+  char name[128];
   char theme[16];
   if (!jsonGetString(obj, "id", id, sizeof(id)) || !id[0]) {
     return false;
@@ -453,7 +453,7 @@ inline bool pageFromObject(const char *obj, Page *out) {
   pageCopyField(out->id, sizeof(out->id), id);
   name[0] = 0;
   jsonGetString(obj, "name", name, sizeof(name));
-  asciiFoldClip(out->name, sizeof(out->name), name[0] ? name : id, kPageNameMax);
+  circleFoldClip(out->name, sizeof(out->name), name[0] ? name : id, kPageNameMax);
   theme[0] = 0;
   jsonGetString(obj, "theme", theme, sizeof(theme));
   pageCopyField(out->theme, sizeof(out->theme), theme[0] ? theme : "ember");

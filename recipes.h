@@ -14,7 +14,7 @@ static const size_t kNvsStrMax = 3900;
 
 struct RecipeScene {
   char rid[40];
-  char name[25];
+  char name[49];  // UTF-8, up to 24 characters (circle set: 2 bytes each)
 };
 
 struct HueRecipe {
@@ -115,7 +115,7 @@ inline void recipeParseSceneTarget(const char *obj, void *ctx) {
   }
   char rtype[16];
   char rid[40];
-  char name[48];
+  char name[128];
   rtype[0] = 0;
   rid[0] = 0;
   name[0] = 0;
@@ -131,7 +131,7 @@ inline void recipeParseSceneTarget(const char *obj, void *ctx) {
   RecipeScene &sc = r->scenes[r->sceneCount];
   memset(&sc, 0, sizeof(sc));
   recipeCopyField(sc.rid, sizeof(sc.rid), rid);
-  asciiFoldClip(sc.name, sizeof(sc.name), name, kSceneNameMax);
+  circleFoldClip(sc.name, sizeof(sc.name), name, kSceneNameMax);
   r->sceneCount++;
 }
 

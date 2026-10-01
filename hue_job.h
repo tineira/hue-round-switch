@@ -67,7 +67,7 @@ struct HueJobResult {
   int pct;
   bool haveScene;
   bool sceneHave;
-  char sceneName[25];
+  char sceneName[49];
   char sceneRid[40];
   bool isScene;
   char chosenRid[40];
