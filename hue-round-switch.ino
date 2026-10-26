@@ -25,7 +25,7 @@ String gHueAppKey;
 // goes back to the previous one on the next restart.
 extern "C" bool verifyRollbackLater() { return true; }
 
-// Ownership (see docs/specs/stability.md §4.9):
+// Ownership (see docs/archive/specs/stability.md §4.9):
 // - loop (core 1): UI, gestures, pages / recipes in RAM and their NVS.
 // - hueJob task: the Bridge connection, the link state, Bridge IP / key / id.
 // - consoleJob task: the Vercel connection; the config body reaches the loop via a queue.

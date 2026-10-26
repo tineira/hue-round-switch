@@ -108,7 +108,7 @@ static void testFindRidByRtype() {
 }
 
 // The circle set, as the console spells it (ROUND_CIRCLE_CHARS) and its CP437 codes
-// (console docs/specs/round-accented-names.md §2), in the same order.
+// (console docs/archive/specs/round-accented-names.md §2), in the same order.
 static const char *kCircleChars = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜáíóúñÑ¿¡ß";
 static const uint8_t kCircleCodes[] = {
     0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B,

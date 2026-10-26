@@ -215,7 +215,7 @@ inline bool jsonHueSceneActive(const char *json, bool *active) {
 // The circle set: characters the circle's 5×7 font (GFX Library built-in font, IBM code
 // page 437) has a glyph for, beyond ASCII. Code point (all in Latin-1) → CP437 byte.
 // Must match ROUND_CIRCLE_CHARS in the console (lib/round-themes.ts) and the table in its
-// docs/specs/round-accented-names.md §2. Changes only if the font changes.
+// docs/archive/specs/round-accented-names.md §2. Changes only if the font changes.
 struct CircleGlyph {
   uint8_t cp;
   uint8_t cp437;

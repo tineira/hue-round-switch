@@ -1,6 +1,6 @@
 #pragma once
 
-// Update over Wi-Fi (console docs/specs/ota-round.md, on top of ota.md §4). Ported from the Simple
+// Update over Wi-Fi (console docs/archive/specs/ota-round.md, on top of ota.md §4). Ported from the Simple
 // switch's ota.h; shared per chip family only, so this copy is the Round's own.
 //
 // Console task (core 0): a poll's 200 body may carry `ota` { version, url, sha256, size }. The

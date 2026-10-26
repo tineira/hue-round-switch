@@ -45,7 +45,7 @@ struct PageTheme {
   uint16_t error;
 };
 
-// Hex from docs/round-themes.html → RGB565.
+// Hex from the console's lib/round-themes.ts → RGB565.
 static constexpr uint16_t hx(uint32_t h) {
   return static_cast<uint16_t>((((h >> 16) & 0xF8u) << 8) | (((h >> 8) & 0xFCu) << 3) |
                                ((h & 0xFFu) >> 3));
