@@ -9,15 +9,17 @@ Same console as `hue-simple-switch` (`https://hue.tineira.com`). This board is a
 This firmware is one of several switches for one console. The console repo [`hue-switch-console`](https://github.com/tineira/hue-switch-console) owns the contract. Local checkout paths on the maintainer's machine are in `AGENTS.local.md` (gitignored) when it exists; read it to find the sibling repos.
 
 - `docs/device-api.md`: endpoints, auth, payloads, error codes. Authoritative.
+- `docs/usb-protocol.md`: the USB side (Improv, `HUESET`, `HUEGET`, `HUEPAIR`, `HUECLR`), the NVS the console writes, flashing. `usb_setup.h` implements it.
 - `docs/definitions.md`: product model (recipes, channels, pages).
+- `docs/round-pages.md`: Round pages behavior and their poll fields (this repo's `docs/pages-requirements.md` points there).
 - `docs/changelog.md`: the console's own release notes. This firmware's notes live in this repo's `CHANGELOG.md`.
-- `CHANGELOG.md` (this repo): the release notes CI uploads. A bullet that starts with `Important: ` is shown first on the console's Setup before an update; use it only for something the person must know or do around the update (`docs/specs/finished/setup-update-notes.md`).
-- `docs/specs/`: cross-repo specs, each with a checklist per repo.
+- `CHANGELOG.md` (this repo): the release notes CI uploads. A bullet that starts with `Important: ` is shown first on the console's Setup before an update; use it only for something the person must know or do around the update (console `README.md`, "Firmware release pipeline").
+- Cross-repo contract changes are proposed as a "Contract change" issue in the console repo; this repo's part is an issue here.
 
 Rules:
 
-- Do not change what this firmware sends to or expects from the console (endpoints, JSON fields, error handling, NVS keys the console writes over USB) unless `docs/device-api.md` or an approved spec in `docs/specs/` says so. If the work needs a protocol change, stop and propose it for the console repo; do not invent it here.
-- When working from a cross-repo spec, do only this repo's checklist section and tick it. The console ships first and stays backward compatible, so boards already on the wall keep working.
+- Do not change what this firmware sends to or expects from the console (endpoints, JSON fields, error handling, NVS keys the console writes over USB) unless the console's contract docs or an approved "Contract change" issue in the console repo say so. If the work needs a protocol change, stop and propose it for the console repo; do not invent it here.
+- When working from a contract change, do only this repo's issue. The console ships first and stays backward compatible, so boards already on the wall keep working.
 - Read the console docs from its checkout (or GitHub); do not copy them into this tree.
 - The other switch firmwares (`hue-round-switch`, `hue-simple-switch`, and any later ones) implement the same contract. Do not edit them from this repo. If behavior both should share differs, say so.
 
@@ -68,7 +70,7 @@ Replace `COMx` with the XIAO port (`arduino-cli board list`, typically COM4 on H
 
 Releases: a push to `main` runs `.github/workflows/firmware.yml`. It builds with `SERIAL_DEBUG` 0 and uploads the four installer parts to the console (`POST <console>/api/firmware/round`, where `<console>` is the `CONSOLE_UPLOAD_URL` repository variable or `https://hue.tineira.com` when unset; secret `FIRMWARE_UPLOAD_TOKEN`) with this version's `CHANGELOG.md` entry as the notes; the console serves `/install` and `/changelog` from that upload. A failed upload (missing token or notes, any error) fails the run; only on a fork (`github.repository` is not `tineira/hue-round-switch`) does a missing token skip the upload with a notice instead. Same bins and version again: no change. Different bins under the same version (`409 version_exists`, e.g. a `CHANGELOG.md`-only push): a warning, the notes are updated but the bins are not, so bump `FIRMWARE_VERSION` to ship new bins. The run also refreshes the `usb-installer` GitHub release as a download link. Pushes that change only docs (`*.md`, `docs/`) do not run it, except `CHANGELOG.md`, which re-sends the notes. To skip any other push, put `[skip ci]` in its commit message. The tag counts anywhere in the message, body included: never write it out unless you mean it (describe it as "the skip tag").
 
-Updates over Wi-Fi (0.6.0+, console `docs/specs/ota-round.md`): `ota.h`. The poll's `ota` offer is downloaded in the console task into the inactive app slot, checked (length, sha256) and confirmed after the new image's first successful poll (`verifyRollbackLater()` in the `.ino`). NVS namespace `ota` (`dl`, `try`) is the firmware's own, never written over USB. A debug build reporting a version above the current release, plus **Downgrade** on Switches, tests the whole path without a release.
+Updates over Wi-Fi (0.6.0+; wire: console `docs/device-api.md`, design history: console `docs/archive/specs/ota-round.md`): `ota.h`. The poll's `ota` offer is downloaded in the console task into the inactive app slot, checked (length, sha256) and confirmed after the new image's first successful poll (`verifyRollbackLater()` in the `.ino`). NVS namespace `ota` (`dl`, `try`) is the firmware's own, never written over USB. A debug build reporting a version above the current release, plus **Downgrade** on Switches, tests the whole path without a release.
 
 Credits: `THIRD_PARTY.json` (repo root) lists what is linked into the image, with name, version, license and URL: the Arduino-ESP32 core, the ESP-IDF it bundles, and every library under `libraries:` in `sketch.yaml`. The upload sends it as `credits`, and the console shows it on `/credits`. `scripts/check-credits.py` checks that the core and every library pinned in `sketch.yaml` appear there with the same version; the pull request check (`build.yml`) and the release (`firmware.yml`) both run it and fail otherwise; update it in the same commit that changes `sketch.yaml`, with the license read from the component's own files.
 
@@ -100,4 +102,5 @@ Recipes are assigned in the web console, not on the circle.
 - `setInsecure()` only against the Hue Bridge. Verify TLS to `hue.tineira.com`
 - Do not impersonate Hue accessories or use Zigbee on this sketch
 - Do not put this sketch inside `hue-simple-switch`
-- Scratch notes (`docs/_audit-*.md`, `docs/_review-*.md`) are not spec. Delete them once used. Do not commit them.
+- `docs/` describes how this firmware works today. No `docs/specs/`, `docs/plans/`, `docs/prototypes/` or `docs/design/`: a contract change is a console issue, other specs live in the maintainer's internal tracker, and open work is GitHub issues. `docs/archive/` is frozen history, never added to.
+- Scratch notes (`docs/_audit-*.md`, `docs/_review-*.md`) are not docs. Delete them once used. Do not commit them.

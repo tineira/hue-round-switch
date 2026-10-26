@@ -4,7 +4,7 @@ Wi‑Fi Hue switch for the **Seeed XIAO ESP32-S3** + **Round Display** (1.28" ci
 
 Same console as `hue-simple-switch`: [hue.tineira.com](https://hue.tineira.com). This product is **touched on the screen**, not wired to digital pins.
 
-The contract this firmware implements lives in the console repo: `hue-switch-console/docs/device-api.md`, `docs/definitions.md`, and the pages requirements in `docs/round-pages.md`.
+The contract this firmware implements lives in the console repo: `hue-switch-console/docs/device-api.md`, `docs/usb-protocol.md` (the USB side), `docs/definitions.md`, and the pages contract in `docs/round-pages.md`.
 
 ## Setup
 
@@ -57,6 +57,8 @@ The Round is a low-voltage build: it runs on USB-C only. Never connect any of it
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and ideas go in GitHub issues.
+
+Open work: GitHub issues.
 
 ## Sponsor
 
